@@ -22,21 +22,21 @@ module Gemcutter::Middleware
         /quick/latest_index
       ]
 
-      super(app, options)
+      super
     end
 
     def can_serve(path)
-      super(path) || gem_download_path(path) || path =~ %r{/quick/Marshal\.4\.8/.*\.gemspec.rz}
+      super || gem_download_path(path) || path =~ %r{^/quick/Marshal\.4\.8/.*\.gemspec.rz}
     end
 
     def gem_download_path(path)
-      Regexp.last_match(1) if path =~ %r{/gems/(.*)\.gem}
+      Regexp.last_match(1) if path =~ %r{^/gems/([^/]*)\.gem}
     end
 
     def call(env)
       path = env["PATH_INFO"]
 
-      return [302, { "Location" => "/gems/#{Regexp.last_match(1)}.gem" }, []] if path =~ %r{/downloads/(.*)\.gem}
+      return [302, { "Location" => "/gems/#{Regexp.last_match(1)}.gem" }, []] if path =~ %r{^/downloads/([^/]*)\.gem}
 
       download_path = gem_download_path(path)
       name = Version.rubygem_name_for(download_path) if download_path

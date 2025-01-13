@@ -1,0 +1,55 @@
+// For format details, see https://aka.ms/devcontainer.json. For config options, see the
+{
+  "name": "RubyGems.org",
+  "dockerComposeFile": [
+    "docker-compose.yml",
+    "../docker-compose.yml"
+  ],
+  "service": "rails-app",
+  "runServices": [
+    "db",
+    "cache",
+    "search",
+    "toxiproxy",
+    "selenium"
+  ],
+  "forwardPorts": [
+    3000, // Rails
+    11211, // Memcache
+    9200, // Opensearch
+    5432 // PostgreSQL
+  ],
+  "workspaceFolder": "/workspaces/${localWorkspaceFolderBasename}",
+  // Use 'postCreateCommand' to run commands after the container is created.
+  "onCreateCommand": "bin/setup",
+  // Use 'updateContentCommand' to run commands when the container is updated.
+  "updateContentCommand": "bin/setup",
+  // Features to add to the dev container. More info: https://containers.dev/features.
+  "features": {
+    "ghcr.io/devcontainers/features/github-cli:1": {},
+    // "ghcr.io/rails/devcontainer/features/activestorage": {},
+    "ghcr.io/rails/devcontainer/features/postgres-client": {}
+  },
+  // Configure tool-specific properties.
+  "containerEnv": {
+    "EDITOR": "code --wait",
+    "GIT_EDITOR": "code --wait",
+    "CAPYBARA_SERVER_PORT": "45678",
+    "SELENIUM_HOST": "selenium",
+    "ELASTICSEARCH_URL": "http://search:9200",
+    "DATABASE_URL": "postgres://postgres@db:5432"
+  },
+  "customizations": {
+    "codespaces": {
+      "openFiles": [
+        "README.md",
+        "CONTRIBUTING.md"
+      ]
+    },
+    "vscode": {
+      "extensions": [
+        "Shopify.ruby-lsp"
+      ]
+    }
+  }
+}

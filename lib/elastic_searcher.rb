@@ -1,30 +1,49 @@
 class ElasticSearcher
+  CONNECTION_ERRORS = [
+    Faraday::ConnectionFailed,
+    Faraday::TimeoutError,
+    Searchkick::Error,
+    OpenSearch::Transport::Transport::Error,
+    Errno::ECONNRESET
+  ].freeze
+
+  SearchNotAvailableError = Class.new(StandardError)
+  InvalidQueryError = Class.new(StandardError)
+
   def initialize(query, page: 1)
     @query  = query
     @page   = page
   end
 
   def search
-    result = Rubygem.__elasticsearch__.search(search_definition).page(@page)
+    result = Rubygem.searchkick_search(
+      body: search_definition.to_hash,
+      page: @page,
+      per_page: Kaminari.config.default_per_page,
+      load: false
+    )
     result.response # ES query is triggered here to allow fallback. avoids lazy loading done in the view
     [nil, result]
-  rescue Faraday::ConnectionFailed, Faraday::TimeoutError, Elasticsearch::Transport::Transport::Error => e
-    result = Rubygem.legacy_search(@query).page(@page)
-    [error_msg(e), result]
+  rescue StandardError => e
+    [error_msg(e), nil]
   end
 
   def api_search
-    result = Rubygem.__elasticsearch__.search(search_definition(for_api: true)).page(@page)
-    result.map(&:_source)
-  rescue Faraday::ConnectionFailed, Faraday::TimeoutError, Elasticsearch::Transport::Transport::Error
-    Rubygem.legacy_search(@query).page(@page)
+    result = Rubygem.searchkick_search(body: search_definition(for_api: true).to_hash, page: @page, per_page: Kaminari.config.default_per_page,
+load: false)
+    result.response["hits"]["hits"].pluck("_source")
+  rescue Searchkick::InvalidQueryError => e
+    raise InvalidQueryError, error_msg(e)
+  rescue *CONNECTION_ERRORS => e
+    raise SearchNotAvailableError, error_msg(e)
   end
 
   def suggestions
-    result = Rubygem.__elasticsearch__.search(suggestions_definition).page(@page)
-    result = result.response.suggest[:completion_suggestion][0][:options]
-    result.map { |gem| gem[:_source].name }
-  rescue Faraday::ConnectionFailed, Faraday::TimeoutError, Elasticsearch::Transport::Transport::Error
+    result = Rubygem.searchkick_search(body: suggestions_definition.to_hash, page: @page, per_page: Kaminari.config.default_per_page, load: false)
+    result = result.response["suggest"]["completion_suggestion"][0]["options"]
+    result.map { |gem| gem["_source"]["name"] }
+  rescue *CONNECTION_ERRORS => e
+    Rails.error.report(e, handled: true)
     Array(nil)
   end
 
@@ -34,7 +53,7 @@ class ElasticSearcher
     query_str = @query
     source_array = for_api ? api_source : ui_source
 
-    Elasticsearch::DSL::Search.search do
+    OpenSearch::DSL::Search.search do
       query do
         function_score do
           query do
@@ -90,18 +109,18 @@ class ElasticSearcher
   def suggestions_definition
     query_str = @query
 
-    Elasticsearch::DSL::Search.search do
+    OpenSearch::DSL::Search.search do
       suggest :completion_suggestion, prefix: query_str, completion: { field: "suggest", contexts: { yanked: false }, size: 30 }
       source "name"
     end
   end
 
   def error_msg(error)
-    if error.is_a? Elasticsearch::Transport::Transport::Errors::BadRequest
-      "Failed to parse: '#{@query}'. Falling back to legacy search."
+    if error.is_a? Searchkick::InvalidQueryError
+      "Failed to parse search term: '#{@query}'."
     else
-      Honeybadger.notify(error)
-      "Advanced search is currently unavailable. Falling back to legacy search."
+      Rails.error.report(error, handled: true)
+      "Search is currently unavailable. Please try again later."
     end
   end
 

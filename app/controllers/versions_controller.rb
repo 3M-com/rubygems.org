@@ -2,14 +2,15 @@ class VersionsController < ApplicationController
   before_action :find_rubygem
 
   def index
-    @versions = @rubygem.versions.by_position
+    set_page
+    @versions = @rubygem.versions.by_position.page(@page).per(Gemcutter::VERSIONS_PER_PAGE)
   end
 
   def show
-    @latest_version  = Version.find_from_slug!(@rubygem.id, params[:id])
+    @latest_version  = @rubygem.find_version_by_slug!(params[:id])
     @versions        = @rubygem.public_versions_with_extra_version(@latest_version)
     @versioned_links = @rubygem.links(@latest_version)
-    @adoption        = @rubygem.ownership_call
+    @on_version_page = true
     render "rubygems/show"
   end
 end

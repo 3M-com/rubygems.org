@@ -52,41 +52,52 @@ gem server, please consider checking out
 provide pass-through caching for RubyGems.org, as well as host private
 gems for your organization..**
 
+### Getting the code
+
+Clone the repo: `git clone https://github.com/rubygems/rubygems.org.git`
+Move to the newly cloned repository directory: `cd rubygems.org`
+
+### Setting up the environment
+
+Rubygems.org is a Ruby on Rails application.
+The app depends on Elasticsearch, Memcached, and PostgreSQL.
+Google Chrome is used for tests.
+
+Setup the development environment using one of the approaches below.
+
 #### Environment (Docker)
 
 There is a `docker-compose.yml` file inside the project that easily lets you spin up
-services that the application depends on such as: postgresql, memcached & elasticsearch.
+postgresql, memcached & elasticsearch.
 
-* Install Docker. See instructions at https://docs.docker.com/engine/installation/
-* run `docker-compose up` to start the required services.
+Note: Docker compose does not run the rubygems.org application itself.
+
+* Install Docker. See instructions at https://docs.docker.com/get-docker/
+* run `docker compose up` to start the required services.
 
 Follow the instructions below on how to install Bundler and setup the database.
 
 #### Environment (OS X)
 
-* Use Ruby 3.0.x (`.ruby-version` is present and can be used)
-* Use Rubygems 3.2.31
-* Install bundler: `gem install bundler`
 * Install Elasticsearch:
+
   * Pull Elasticsearch `7.10.1` : `docker pull docker.elastic.co/elasticsearch/elasticsearch:7.10.1`
   * Running Elasticsearch from the command line:
+
   ```
   docker run -p 9200:9200 -e "http.host=0.0.0.0" -e "transport.host=127.0.0.1" -e "xpack.security.enabled=false" docker.elastic.co/elasticsearch/elasticsearch:7.10.1
   ```
+
   * Note that `-e "xpack.security.enabled=false"` disables authentication.
 
-* Install PostgreSQL (>= 11.13.x): `brew install postgres`
+* Install PostgreSQL (>= 13.x): `brew install postgres`
   * Setup information: `brew info postgresql`
 * Install memcached: `brew install memcached`
   * Show all memcached options: `memcached -h`
-* Install Google-Chrome: `brew cask install google-chrome`
+* Install Google-Chrome: `brew install google-chrome --cask`
 
 #### Environment (Linux - Debian/Ubuntu)
 
-* Use Ruby 3.0.x `apt-get install ruby3.0`
-  * Or install via [alternate methods](https://www.ruby-lang.org/en/downloads/)
-* Use Rubygems 3.2.31
-* Install bundler: `gem install bundler`
 * Install Elasticsearch (see the docker installation instructions above):
   * Pull Elasticsearch `7.10.1` : `docker pull docker.elastic.co/elasticsearch/elasticsearch:7.10.1`
   * Running Elasticsearch from the command line:
@@ -101,27 +112,34 @@ Follow the instructions below on how to install Bundler and setup the database.
   * Download latest stable: `wget https://dl.google.com/linux/direct/google-chrome-stable_current_amd64.deb`
   * Install chrome: `sudo dpkg -i google-chrome-stable_current_amd64.deb`
 
-#### Getting the code
+### Installing ruby, gem dependencies, and setting up the database
 
-* Clone the repo: `git clone git://github.com/rubygems/rubygems.org`
-* Move into your cloned rubygems directory if you haven’t already:
-    `cd rubygems.org`
-* Install dependencies:
-    `bundle install`
-
-#### Setting up the database
-
-* Get set up: `./script/setup`
-* Run the database rake tasks if needed:
-    `bundle exec rake db:reset db:test:prepare --trace`
+* Use Ruby 3.3.x
+  * See: [Ruby install instructions](https://www.ruby-lang.org/en/downloads/).
+  * `.ruby-version` is present and can be used.
+* Use Rubygems 3.5.x
+* Install bundler:
+  `gem install bundler`
+* Install dependencies and setup the database:
+  `./bin/setup`
 * Set up elasticsearch indexes:
-    `bundle exec rake environment elasticsearch:import:all DIR=app/models FORCE=y`
+    `bundle exec rake searchkick:reindex CLASS=Rubygem`
 
-#### Running tests
+### Running tests
 
-* Start elasticsearch: `elasticsearch`
-* Start memcached: `memcached`
-* Run the tests: `bundle exec rake`
+Make sure that the tests run successfully before making changes.
+
+* Depending on how you setup your environment, run `docker compose up` or
+  ensure elasticsearch, memcached, and postgres are running.
+* Run the tests: `bin/rails test:all`
+* See also: [Ruby on Rails testing documentation](https://guides.rubyonrails.org/testing.html).
+
+### Running the application
+
+* Depending on how you setup your environment, run `docker compose up` or
+  ensure elasticsearch, memcached, and postgres are running.
+* Start the application: `bin/rails s`
+* Visit http://localhost:3000 in your browser.
 
 #### Confirmation emails links
 
@@ -139,12 +157,12 @@ build will fail.
 If you'd like RuboCop to attempt to automatically fix your style offenses, you
 can try running:
 
-    bundle exec rake rubocop:auto_correct
+    bundle exec rake rubocop:autocorrect
 
 #### Importing gems into the database
 
 * Import gems into the database with Rake task.
-    `bundle exec rake gemcutter:import:process vendor/cache`
+    `bundle exec rake "gemcutter:import:process[vendor/cache]"`
     * _To import a small set of gems you can point the import process to any
         gems cache directory, like a very small `rvm` gemset for instance, or
 	specifying `GEM_PATH/cache` instead of `vendor/cache`._
@@ -155,18 +173,18 @@ can try running:
 
 * A good way to get some test data is to import from a local gem directory.
 `gem env` will tell you where rubygems stores your gems. Run
-`bundle exec rake gemcutter:import:process #{INSTALLATION_DIRECTORY}/cache`
+`bundle exec rake "gemcutter:import:process[#{INSTALLATION_DIRECTORY}/cache]"`
 
 * If you see "Processing 0 gems" you’ve probably specified the wrong
 directory. The proper directory will be full of .gem files.
 
 #### Getting the data dumps
-* You can use rubygems.org data [dumps](https://rubygems.org/pages/data) to test
-application in development environment especially for performance related issues.
-* To load the main database dump into Postgres, use `script/load-pg-dump`. e.g.
+* You can use rubygems.org data [dumps](https://rubygems.org/pages/data) to test the
+application in a development environment, especially for performance-related issues.
+* To load the main database dump into Postgres, use the `script/load-pg-dump` script. e.g.
 
     ``` bash
-    $ ./script/load-pg-dump -d rubygems_development
+    $ ./script/load-pg-dump -d rubygems_development ~/Downloads/public_postgresql.tar
     ```
 
 #### Pushing gems
@@ -177,17 +195,49 @@ application in development environment especially for performance related issues
     ``` bash
     RUBYGEMS_HOST=http://localhost:3000 gem push hola-0.0.3.gem
     ```
+
+#### Developing with dev secrets
+
+If you're a member of the RubyGems.org team and have access to development secrets in the shared 1Password,
+you can automatically use those secrets by installing the [1Password CLI](https://developer.1password.com/docs/cli)
+and prefixing your commands with `script/dev`.
+
+For example, running `script/dev bin/rails s` will launch the development server with development secrets set in
+the environment.
+
+#### Running with local RSTUF
+
+There is experimental [RSTUF](https://repository-service-tuf.readthedocs.io/en/stable/) support in RubyGems.org. When `RSTUF_API_URL` environment variable is set, RSTUF functionality is enabled. Easiest way to setup RSTUF locally is to follow [official docker guide](https://repository-service-tuf.readthedocs.io/en/latest/guide/deployment/guide/docker.html). It starts RSTUF API available at `http://localhost:80` by default and app can be locally started using following command.
+
+```bash
+RSTUF_API_URL="http://localhost:80" bin/rails s
+```
+
 ---
 
 When everything is set up, start the web server with `rails server` and browse to
-[localhost:3000](http://localhost:3000) or use [Pow](http://pow.cx)!
+[localhost:3000](http://localhost:3000)!
+
+#### Running with local Timescale
+
+There is early and experimental [TimescaleDB](https://docs.timescale.com/self-hosted/latest/) support in RubyGems.org for downloads statistics. When secondary `downloads` database is configured (using `database.yml` or by providing `DOWNLOADS_DATABASE_URL` environment variable), experimental features are automatically enabled.
+
+Localy, the easiest way is to run TimescaleDB using `docker-compose.yml` and configure using `database.yml.ts-sample`.
+
+```bash
+cp config/database.yml.ts-sample config/database.yml
+docker compose up -d db cache search # run required dependencies
+docker compose up -d downloads-db # run optional TimescaleDB dependency
+bin/rails db:setup # setup all databases, including optional Timescale one
+bin/rails s # start rails server as ususal
+```
 
 Database Layout
 ---------------
 
 Courtesy of [Rails ERD](https://voormedia.github.io/rails-erd/)
 
-![Rubygems.org Domain Model](https://cdn.rawgit.com/rubygems/rubygems.org/master/doc/erd.svg)
+    bin/rails gen_erd
 
 Locales
 -------

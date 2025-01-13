@@ -1,4 +1,4 @@
-class Api::V1::GithubSecretScanningController < Api::BaseController
+class Api::V1::GitHubSecretScanningController < Api::BaseController
   include ApiKeyable
 
   # API called by GitHub Secret Scanning tool
@@ -24,18 +24,18 @@ class Api::V1::GithubSecretScanningController < Api::BaseController
     return render plain: "Can't fetch public key from GitHub", status: :unauthorized if key.empty_public_key?
     return render plain: "Invalid GitHub Signature", status: :unauthorized unless key.valid_github_signature?(signature, request.body.read.chomp)
 
-    tokens = params.require(:_json).map { |t| t.permit(:token, :type, :url) }
-    resp = []
-    tokens.each do |t|
-      api_key = ApiKey.find_by(hashed_key: hashed_key(t[:token]))
-      label = if api_key&.destroy
+    tokens = params.expect(_json: [%i[token type url]]).index_by { |t| hashed_key(t.require(:token)) }
+    api_keys = ApiKey.where(hashed_key: tokens.keys).index_by(&:hashed_key)
+    resp = tokens.map do |hashed_key, t|
+      api_key = api_keys[hashed_key]
+      label = if api_key&.expire!
                 schedule_revoke_email(api_key, t[:url])
                 "true_positive"
               else
                 "false_positive"
               end
 
-      resp << {
+      {
         token_raw: t[:token],
         token_type: t[:type],
         label: label
@@ -50,10 +50,11 @@ class Api::V1::GithubSecretScanningController < Api::BaseController
   private
 
   def schedule_revoke_email(api_key, url)
-    Mailer.delay.api_key_revoked(api_key.user_id, api_key.name, api_key.enabled_scopes.join(", "), url)
+    return unless api_key.user?
+    Mailer.api_key_revoked(api_key.owner_id, api_key.name, api_key.scopes.join(", "), url).deliver_later
   end
 
   def secret_scanning_key(key_id)
-    GithubSecretScanning.new(key_id)
+    GitHubSecretScanning.new(key_id)
   end
 end

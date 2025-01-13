@@ -1,5 +1,20 @@
-class Indexer
+class Indexer < ApplicationJob
   extend StatsD::Instrument
+  include TraceTagger
+
+  queue_with_priority PRIORITIES.fetch(:push)
+
+  include GoodJob::ActiveJobExtensions::Concurrency
+  good_job_control_concurrency_with(
+    # Maximum number of jobs with the concurrency key to be
+    # concurrently enqueued (excludes performing jobs)
+    #
+    # Because the indexer job only uses current state at time of perform,
+    # it makes no sense to enqueue more than one at a time
+    enqueue_limit: good_job_concurrency_enqueue_limit(default: 1),
+    perform_limit: good_job_concurrency_perform_limit(default: 1),
+    key: name
+  )
 
   def perform
     log "Updating the index"
@@ -10,47 +25,38 @@ class Indexer
   statsd_count_success :perform, "Indexer.perform"
   statsd_measure :perform, "Indexer.perform"
 
-  def write_gem(body, spec)
-    RubygemFs.instance.store("gems/#{spec.original_name}.gem", body.string)
-
-    spec.abbreviate
-    spec.sanitize
-
-    RubygemFs.instance.store(
-      "quick/Marshal.4.8/#{spec.original_name}.gemspec.rz",
-      Gem.deflate(Marshal.dump(spec))
-    )
-  end
-
   private
 
   def stringify(value)
-    final = StringIO.new
+    final = ActiveSupport::Gzip::Stream.new
     gzip = Zlib::GzipWriter.new(final)
-    gzip.write(Marshal.dump(value))
+    Marshal.dump(value, gzip)
     gzip.close
 
     final.string
   end
 
   def upload(key, value)
-    RubygemFs.instance.store(key, stringify(value), "surrogate-key" => "full-index")
+    RubygemFs.instance.store(key, stringify(value), metadata: { "surrogate-key" => "full-index" })
   end
 
   def update_index
-    upload("specs.4.8.gz", specs_index)
-    log "Uploaded all specs index"
-    upload("latest_specs.4.8.gz", latest_index)
-    log "Uploaded latest specs index"
-    upload("prerelease_specs.4.8.gz", prerelease_index)
-    log "Uploaded prerelease specs index"
+    trace("gemcutter.indexer.index", resource: "specs.4.8.gz") do
+      upload("specs.4.8.gz", specs_index)
+      log "Uploaded all specs index"
+    end
+    trace("gemcutter.indexer.index", resource: "latest_specs.4.8.gz") do
+      upload("latest_specs.4.8.gz", latest_index)
+      log "Uploaded latest specs index"
+    end
+    trace("gemcutter.indexer.index", resource: "prerelease_specs.4.8.gz") do
+      upload("prerelease_specs.4.8.gz", prerelease_index)
+      log "Uploaded prerelease specs index"
+    end
   end
 
   def purge_cdn
-    return unless ENV["FASTLY_SERVICE_ID"] && ENV["FASTLY_API_KEY"]
-
-    Fastly.purge_key("full-index")
-    log "Purged index urls from fastly"
+    log "Purged index urls from fastly" if Fastly.purge_key("full-index")
   end
 
   def minimize_specs(data)
@@ -80,6 +86,6 @@ class Indexer
   end
 
   def log(message)
-    Rails.logger.info "[GEMCUTTER:#{Time.zone.now}] #{message}"
+    logger.info message
   end
 end

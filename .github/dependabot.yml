@@ -5,14 +5,20 @@ updates:
   schedule:
     interval: daily
   open-pull-requests-limit: 99
-  versioning-strategy: lockfile-only
-  ignore:
-  - dependency-name: aws-sdk
-    versions:
-    - "> 2.11.473, < 2.12"
-  - dependency-name: "rubocop*"
+  versioning-strategy: increase
+  groups:
+    avo:
+      patterns: ["avo", "avo-*"]
+    rubocop:
+      patterns: ["rubocop", "rubocop-*"]
+    rails:
+      patterns: ["rails", "active*", "action*", "railties"]
 - package-ecosystem: github-actions
   directory: "/"
   schedule:
     interval: daily
   open-pull-requests-limit: 99
+- package-ecosystem: docker
+  directory: /
+  schedule:
+    interval: daily

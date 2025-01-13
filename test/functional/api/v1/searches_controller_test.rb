@@ -1,7 +1,7 @@
 require "test_helper"
 
 class Api::V1::SearchesControllerTest < ActionController::TestCase
-  include ESHelper
+  include SearchKickHelper
 
   def self.should_respond_to(format)
     context "with query=match and with #{format.to_s.upcase}" do
@@ -10,11 +10,13 @@ class Api::V1::SearchesControllerTest < ActionController::TestCase
       end
 
       should respond_with :success
+
       should "contain a hash" do
         assert_kind_of Hash, yield(@response.body).first
       end
       should "only include matching gems" do
         gems = yield(@response.body)
+
         assert_equal 1, gems.size
         assert_equal "match", gems.first["name"]
       end
@@ -26,6 +28,7 @@ class Api::V1::SearchesControllerTest < ActionController::TestCase
       end
 
       should respond_with :bad_request
+
       should "explain failed request" do
         assert page.has_content?("Request is missing param 'query'")
       end
@@ -50,13 +53,23 @@ class Api::V1::SearchesControllerTest < ActionController::TestCase
     end
 
     context "with elasticsearch down" do
-      should "fallback to legacy search" do
+      should "returns friendly error message" do
         requires_toxiproxy
         Toxiproxy[:elasticsearch].down do
           get :show, params: { query: "other" }, format: :json
-          assert_response :success
-          assert_equal "other", JSON.parse(@response.body).first["name"]
+
+          assert_response :service_unavailable
+          assert_equal "Search is currently unavailable. Please try again later.", @response.body
         end
+      end
+    end
+
+    context "invalid query" do
+      should "returns friendly error message" do
+        get :show, params: { query: "AND other" }, format: :json
+
+        assert_response :bad_request
+        assert_equal "Failed to parse search term: 'AND other'.", JSON.parse(@response.body)["error"]
       end
     end
   end
@@ -93,6 +106,7 @@ class Api::V1::SearchesControllerTest < ActionController::TestCase
         requires_toxiproxy
         Toxiproxy[:elasticsearch].down do
           get :autocomplete, params: { query: "ot" }
+
           assert_response :success
           assert_empty JSON.parse(@response.body)
         end

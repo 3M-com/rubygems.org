@@ -1,38 +1,12 @@
 class Api::V1::DependenciesController < Api::BaseController
-  before_action :check_gem_count
-
   def index
-    deps = GemDependent.new(gem_names).to_a
-
-    expires_in 30, public: true
-    fastly_expires_in 60
-    set_surrogate_key("dependencyapi", gem_names.map { |name| "gem/#{name}" })
+    cache_expiry_headers(expiry: 30, fastly_expiry: 60)
+    set_surrogate_key("dependencyapi")
 
     respond_to do |format|
-      format.json { render json: deps }
-      format.marshal { render plain: Marshal.dump(deps) }
+      error = "The dependency API has gone away. See https://blog.rubygems.org/2023/02/22/dependency-api-deprecation.html for more information"
+      format.marshal { render plain: error, status: :not_found }
+      format.json { render json: { error: error, code: 404 }, status: :not_found }
     end
-  end
-
-  private
-
-  def check_gem_count
-    return render plain: "" if gem_names.empty?
-    return if gem_names.size <= Gemcutter::GEM_REQUEST_LIMIT
-
-    case request.format.symbol
-    when :marshal
-      render plain: "Too many gems! (use --full-index instead)", status: :unprocessable_entity
-    when :json
-      render json: { error: "Too many gems! (use --full-index instead)", code: 422 }, status: :unprocessable_entity
-    end
-  end
-
-  def gem_names
-    @gem_names ||= gems_params[:gems].blank? ? [] : gems_params[:gems].split(",".freeze)
-  end
-
-  def gems_params
-    params.permit(:gems)
   end
 end

@@ -5,19 +5,27 @@ metadata:
   name: db-migrate-<%= deployment_id %>
   labels:
     name: db-migrate-<%= deployment_id %>
+    tags.datadoghq.com/env: "<%= environment %>"
+    tags.datadoghq.com/service: rubygems.org
+    tags.datadoghq.com/version: <%= current_sha %>
 spec:
   activeDeadlineSeconds: 300
   automountServiceAccountToken: false
   restartPolicy: Never
   containers:
   - name: db-migrate
-    image: quay.io/rubygems/rubygems.org:<%= current_sha %>
+    image: 048268392960.dkr.ecr.us-west-2.amazonaws.com/rubygems/rubygems.org:<%= current_sha %>
     args: ["rails", "db:migrate"]
     env:
       - name: RAILS_ENV
         value: "<%= environment %>"
       - name: ENV
         value: "<%= environment %>"
+      - name: DD_AGENT_HOST
+        valueFrom:
+          fieldRef:
+            apiVersion: v1
+            fieldPath: status.hostIP
       - name: STATSD_IMPLEMENTATION
         value: "datadog"
       - name: STATSD_HOST
@@ -54,11 +62,6 @@ spec:
           secretKeyRef:
             name: <%= environment %>
             key: aws_secret_access_key
-      - name: NEW_RELIC_LICENSE_KEY
-        valueFrom:
-          secretKeyRef:
-            name: <%= environment %>
-            key: new_relic_license_key
       - name: HONEYBADGER_API_KEY
         valueFrom:
           secretKeyRef:

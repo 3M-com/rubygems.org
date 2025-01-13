@@ -1,26 +1,30 @@
+<% @title_for_header_only = t('.title', username: @user.display_id) %>
+
 <% content_for :title do %>
   <header class="profile__header">
     <div class="profile__header__name-wrap">
       <div id="avatar-frame">
-        <%=
-          image_tag(
-            @user.gravatar_url(size: 300, secure: request.ssl?).html_safe,
-            id: "profile_gravatar",
-            width: 300,
-            height: 300,
-            class: 'profile__header__avatar'
-          )
-        %>
+        <%= avatar(300, 'profile_gravatar', @user, class: 'profile__header__avatar') %>
       </div>
 
-      <h1 id="profile-name" class="profile__header__name t-display">
-        <%=
-          link_to(
-            @user.display_handle, profile_path(@user.display_id),
-            class: "t-link--black"
-          )
-        %>
-      </h1>
+      <% if @user.full_name.present? %>
+        <h1 id="profile-full-name" class="profile__header__name t-display-full-name">
+          <%= link_to(@user.full_name, profile_path(@user.display_id), class: "t-link--black") %>
+        </h1>
+
+        <h1 id="profile-name" class="profile__header__username t-display-username">
+          <%= link_to(@user.display_handle, profile_path(@user.display_id), class: "t-link--black") %>
+        </h1>
+      <% else %>
+        <h1 id="profile-name" class="profile__header__name t-display">
+          <%=
+            link_to(
+              @user.display_handle, profile_path(@user.display_id),
+              class: "t-link--black"
+            )
+          %>
+        </h1>
+      <% end %>
 
       <% if @user == current_user %>
         <div id="profile-settings">
@@ -31,18 +35,6 @@
               id: "edit-settings",
               class: "profile__header__attribute t-link--black",
               "data-icon": "★"
-            )
-          %>
-        </div>
-
-        <div id="ownership-requests">
-          <%=
-            link_to(
-                "Adoptions",
-                adoptions_profile_path,
-                id: "ownership-requests",
-                class: "profile__header__attribute t-link--black",
-                "data-icon": "⟡"
             )
           %>
         </div>
@@ -59,7 +51,7 @@
           %>
         </div>
       <% else %>
-        <% unless @user.hide_email %>
+        <% if @user.public_email? %>
           <p id="profile-email">
             <%=
               mail_to(
@@ -76,8 +68,8 @@
         <% if @user.twitter_username.present? %>
           <%=
             image_tag(
-              "/images/twitter_icon.png",
-              alt: "Twitter icon",
+              "/images/x_icon.png",
+              alt: "X icon",
               class: "profile__header__icon"
             )
           %>
@@ -103,7 +95,7 @@
       </h2>
 
       <h4 id="downloads" class="gem__downloads__heading t-text--s">
-        <%= t('stats.index.total_downloads') %>
+        <%= t('total_downloads') %>
       </h4>
 
       <h2 id="downloads_count" class="gem__downloads">
@@ -116,13 +108,7 @@
 <div id="profile">
   <div class="profile-list">
     <ul>
-      <%=
-        render(
-          partial: 'rubygem',
-          collection: @rubygems + @extra_rubygems,
-          locals: {graph: false}
-        )
-      %>
+      <%= render partial: 'rubygem', collection: @rubygems %>
     </ul>
   </div>
 </div>

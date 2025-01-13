@@ -1,7 +1,7 @@
 require "test_helper"
 
 class SearchTest < SystemTest
-  include ESHelper
+  include SearchKickHelper
 
   test "searching for a gem" do
     create(:rubygem, name: "LDAP", number: "1.0.0")
@@ -32,6 +32,7 @@ class SearchTest < SystemTest
     assert page.has_content? "Yanked (1)"
 
     click_link "Yanked (1)"
+
     assert page.has_content? "LDAP"
     assert page.has_selector? "a[href='#{rubygem_path('LDAP')}']"
   end
@@ -64,6 +65,7 @@ class SearchTest < SystemTest
     import_and_refresh
 
     visit "/search?query=ruby&original_script_name=javascript:alert(1)//&script_name=javascript:alert(1)//"
+
     assert page.has_content? "ruby-ruby"
     assert page.has_link?("Next", href: "/search?page=2&query=ruby")
     Kaminari.configure { |c| c.default_per_page = 30 }
@@ -81,13 +83,36 @@ class SearchTest < SystemTest
       import_and_refresh
 
       visit "/search?query=ruby"
+
       assert page.has_content? "Displaying gem 1 - 1 of 3 in total"
 
       click_link "Last"
+
       assert page.has_content? "Displaying gem 2 - 2 of 3 in total"
 
       Gemcutter::SEARCH_MAX_PAGES = orignal_val
       Kaminari.configure { |c| c.default_per_page = 30 }
     end
+  end
+
+  test "searching for reverse dependencies" do
+    dependency = create(:rubygem)
+    create(:version, rubygem: dependency)
+
+    gem = create(:rubygem)
+    version_one = create(:version, rubygem: gem)
+    create(:dependency, :runtime, version: version_one, rubygem: dependency)
+
+    visit "/gems/#{dependency.name}/reverse_dependencies"
+
+    assert page.has_content? "Search reverse dependencies Gems…"
+    within ".reverse__dependencies" do
+      assert page.has_content? gem.name
+    end
+
+    visit "/gems/#{gem.name}/reverse_dependencies"
+
+    refute page.has_content? "Search reverse dependencies Gems…"
+    assert page.has_content? "This gem has no reverse dependencies"
   end
 end

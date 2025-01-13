@@ -2,15 +2,36 @@ module RubygemSearchable
   extend ActiveSupport::Concern
 
   included do
-    include Elasticsearch::Model
+    searchkick index_name: Gemcutter::SEARCH_INDEX_NAME,
+      callbacks: false,
+      settings: {
+        number_of_shards: 1,
+        number_of_replicas: Gemcutter::SEARCH_NUM_REPLICAS,
+        analysis: {
+          analyzer: {
+            rubygem: {
+              type: "pattern",
+              pattern: "[\s#{Regexp.escape(Patterns::SPECIAL_CHARACTERS)}]+"
+            }
+          }
+        }
+      },
+      mappings:  {
+        properties: {
+          name: { type: "text", analyzer: "rubygem",
+                  fields: { suggest: { analyzer: "simple", type: "text" }, unanalyzed: { type: "keyword", index: "true" } } },
+          summary: { type: "text", analyzer: "english", fields: { raw: { analyzer: "simple", type: "text" } } },
+          description: { type: "text", analyzer: "english", fields: { raw: { analyzer: "simple", type: "text" } } },
+          suggest: { type: "completion", contexts: { name: "yanked", type: "category" } },
+          yanked: { type: "boolean" },
+          downloads: { type: "long" },
+          updated: { type: "date" }
+        }
+      }
+    scope :search_import, -> { includes(:linkset, :gem_download, :most_recent_version, :versions, :latest_version) }
 
-    index_name "rubygems-#{Rails.env}"
-
-    delegate :index_document, to: :__elasticsearch__
-    delegate :update_document, to: :__elasticsearch__
-
-    def as_indexed_json(_options = {}) # rubocop:disable Metrics/MethodLength
-      if (latest_version = versions.most_recent)
+    def search_data # rubocop:disable Metrics/MethodLength
+      if (latest_version = most_recent_version)
         deps = latest_version.dependencies.to_a
         versioned_links = links(latest_version)
       end
@@ -27,7 +48,7 @@ module RubygemSearchable
         metadata:          latest_version&.metadata,
         sha:               latest_version&.sha256_hex,
         project_uri:       "#{Gemcutter::PROTOCOL}://#{Gemcutter::HOST}/gems/#{name}",
-        gem_uri:           "#{Gemcutter::PROTOCOL}://#{Gemcutter::HOST}/gems/#{latest_version&.full_name}.gem",
+        gem_uri:           "#{Gemcutter::PROTOCOL}://#{Gemcutter::HOST}/gems/#{latest_version&.gem_file_name}",
         homepage_uri:      versioned_links&.homepage_uri,
         wiki_uri:          versioned_links&.wiki_uri,
         documentation_uri: versioned_links&.documentation_uri,
@@ -45,37 +66,6 @@ module RubygemSearchable
           runtime: deps&.select { |r| r.rubygem && r.scope == "runtime" }
         }
       }.merge!(suggest_json)
-    end
-
-    settings number_of_shards: 1,
-             number_of_replicas: 1,
-             analysis: {
-               analyzer: {
-                 rubygem: {
-                   type: "pattern",
-                   pattern: "[\s#{Regexp.escape(Patterns::SPECIAL_CHARACTERS)}]+"
-                 }
-               }
-             }
-
-    mapping do
-      indexes :name, type: "text", analyzer: "rubygem" do
-        indexes :suggest, analyzer: "simple"
-        indexes :unanalyzed, type: "keyword", index: "true"
-      end
-      indexes :summary, type: "text", analyzer: "english" do
-        indexes :raw, analyzer: "simple"
-      end
-      indexes :description, type: "text", analyzer: "english" do
-        indexes :raw, analyzer: "simple"
-      end
-      instance_eval do
-        context = { name: "yanked", type: "category" }
-        @mapping[:suggest] = { type: "completion", contexts: context }
-      end
-      indexes :yanked, type: "boolean"
-      indexes :downloads, type: "integer"
-      indexes :updated, type: "date"
     end
 
     def self.legacy_search(query)
@@ -98,12 +88,16 @@ module RubygemSearchable
       {
         suggest: {
           input: name,
-          weight: downloads,
+          weight: suggest_weight_scale(downloads),
           contexts: {
             yanked: versions.none?(&:indexed?)
           }
         }
       }
+    end
+
+    def suggest_weight_scale(downloads)
+      Math.log10(downloads + 1).to_i
     end
   end
 end

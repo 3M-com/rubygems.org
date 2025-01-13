@@ -1,6 +1,8 @@
 class Linkset < ApplicationRecord
   belongs_to :rubygem
 
+  before_save :create_homepage_link_verification, if: :home_changed?
+
   LINKS = %w[home code docs wiki mail bugs].freeze
 
   LINKS.each do |url|
@@ -9,6 +11,8 @@ class Linkset < ApplicationRecord
       allow_nil: true,
       allow_blank: true,
       message: "does not appear to be a valid URL"
+
+    validates url, length: { maximum: Gemcutter::MAX_FIELD_LENGTH }
   end
 
   def empty?
@@ -17,5 +21,10 @@ class Linkset < ApplicationRecord
 
   def update_attributes_from_gem_specification!(spec)
     update!(home: spec.homepage)
+  end
+
+  def create_homepage_link_verification
+    return if home.blank?
+    rubygem.link_verifications.find_or_create_by!(uri: home).retry_if_needed
   end
 end

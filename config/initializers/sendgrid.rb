@@ -1,4 +1,4 @@
-if Rails.env.production? || Rails.env.staging?
+unless Rails.env.local?
   ActionMailer::Base.smtp_settings = {
     address:              'smtp.sendgrid.net',
     port:                 587,
@@ -6,7 +6,7 @@ if Rails.env.production? || Rails.env.staging?
     password:             ENV['SENDGRID_PASSWORD'],
     domain:               'mailer.rubygems.org',
     authentication:       :plain,
-    enable_starttls_auto: true
+    enable_starttls:      true
   }
   ActionMailer::Base.delivery_method = :smtp
 end

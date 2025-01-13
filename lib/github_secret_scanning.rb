@@ -1,4 +1,4 @@
-class GithubSecretScanning
+class GitHubSecretScanning
   KEYS_URI = "https://api.github.com/meta/public_keys/secret_scanning".freeze
 
   def initialize(key_identifier)
@@ -16,14 +16,14 @@ class GithubSecretScanning
   end
 
   def self.public_key(id)
-    cache_key = ["GithubSecretScanning", "public_keys", id]
+    cache_key = ["GitHubSecretScanning", "public_keys", id]
     Rails.cache.fetch(cache_key) do
-      public_keys = JSON.parse(secret_scanning_keys)["public_keys"]
-      public_keys&.find { |v| v["key_identifier"] == id }&.fetch("key")
+      public_keys = secret_scanning_keys.public_keys
+      public_keys&.find { |v| v.key_identifier == id }&.key
     end
   end
 
   def self.secret_scanning_keys
-    RestClient.get(KEYS_URI).body
+    Octokit.client.get(KEYS_URI)
   end
 end

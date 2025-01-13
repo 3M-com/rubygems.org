@@ -16,13 +16,16 @@ spec:
   template:
     metadata:
       annotations:
-        ad.datadoghq.com/unicorn.logs: '[{"source":"rails","service":"rubygems.org"}]'
+        ad.datadoghq.com/shoryuken.logs: '[{"source":"rails","service":"rubygems.org","version": <%= current_sha.dump %>}]'
       labels:
         name: shoryuken
+        tags.datadoghq.com/env: "<%= environment %>"
+        tags.datadoghq.com/service: rubygems.org
+        tags.datadoghq.com/version: <%= current_sha %>
     spec:
       containers:
       - name: shoryuken
-        image: quay.io/rubygems/rubygems.org:<%= current_sha %>
+        image: 048268392960.dkr.ecr.us-west-2.amazonaws.com/rubygems/rubygems.org:<%= current_sha %>
         args: ["bin/shoryuken-worker"]
         resources:
           <% if environment == 'production' %>
@@ -45,6 +48,11 @@ spec:
             value: "<%= environment %>"
           - name: ENV
             value: "<%= environment %>"
+          - name: DD_AGENT_HOST
+            valueFrom:
+              fieldRef:
+                apiVersion: v1
+                fieldPath: status.hostIP
           - name: STATSD_IMPLEMENTATION
             value: "datadog"
           - name: STATSD_HOST
@@ -83,11 +91,6 @@ spec:
               secretKeyRef:
                 name: <%= environment %>
                 key: aws_secret_access_key
-          - name: NEW_RELIC_LICENSE_KEY
-            valueFrom:
-              secretKeyRef:
-                name: <%= environment %>
-                key: new_relic_license_key
           - name: HONEYBADGER_API_KEY
             valueFrom:
               secretKeyRef:
@@ -113,6 +116,8 @@ spec:
               secretKeyRef:
                 name: <%= environment %>
                 key: elasticsearch_url
+          - name: SEARCH_NUM_REPLICAS
+            value: "1"
           - name: MEMCACHED_ENDPOINT
             valueFrom:
               secretKeyRef:

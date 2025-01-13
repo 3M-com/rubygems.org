@@ -1,4 +1,4 @@
-apiVersion: extensions/v1beta1
+apiVersion: networking.k8s.io/v1
 kind: Ingress
 metadata:
   name: <%= environment %>
@@ -11,10 +11,13 @@ metadata:
     alb.ingress.kubernetes.io/target-group-attributes: load_balancing.algorithm.type=least_outstanding_requests
     alb.ingress.kubernetes.io/tags: Env=<%= environment %>,Service=rubygems.org
     alb.ingress.kubernetes.io/healthcheck-path: /internal/ping
+    alb.ingress.kubernetes.io/load-balancer-name: <%= environment %>-rubygems-org
 spec:
   tls:
   - hosts:
     - <%= environment %>-origin.rubygems.org
-  backend:
-    serviceName: unicorn
-    servicePort: 80
+  defaultBackend:
+    service:
+      name: web
+      port:
+        number: 80

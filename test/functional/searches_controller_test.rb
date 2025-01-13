@@ -1,12 +1,13 @@
 require "test_helper"
 
 class SearchesControllerTest < ActionController::TestCase
-  include ESHelper
+  include SearchKickHelper
 
   context "on GET to show with no search parameters" do
     setup { get :show }
 
     should respond_with :success
+
     should "see no results" do
       refute page.has_content?("Results")
     end
@@ -16,12 +17,14 @@ class SearchesControllerTest < ActionController::TestCase
     setup do
       @sinatra = create(:rubygem, name: "sinatra")
       import_and_refresh
-      assert_nil @sinatra.versions.most_recent
+
+      assert_nil @sinatra.most_recent_version
       assert_predicate @sinatra.reload.versions.count, :zero?
       get :show, params: { query: "sinatra" }
     end
 
     should respond_with :success
+
     should "see no results" do
       refute page.has_content?("Results")
     end
@@ -42,11 +45,11 @@ class SearchesControllerTest < ActionController::TestCase
     should respond_with :success
     should "see sinatra on the page in the results" do
       assert page.has_content?(@sinatra.name)
-      assert page.has_selector?("a[href='#{rubygem_path(@sinatra)}']")
+      assert page.has_selector?("a[href='#{rubygem_path(@sinatra.slug)}']")
     end
     should "not see brando on the page in the results" do
       refute page.has_content?(@brando.name)
-      refute page.has_selector?("a[href='#{rubygem_path(@brando)}']")
+      refute page.has_selector?("a[href='#{rubygem_path(@brando.slug)}']")
     end
     should "display 'gems' in pagination summary" do
       assert page.has_content?("all 2 gems")
@@ -67,19 +70,19 @@ class SearchesControllerTest < ActionController::TestCase
 
     should respond_with :success
     should "see sinatra on the page in the results" do
-      page.assert_text(@sinatra.name)
-      page.assert_selector("a[href='#{rubygem_path(@sinatra)}']")
+      assert_text @sinatra.name
+      assert_selector "a[href='#{rubygem_path(@sinatra.slug)}']"
     end
     should "not see brando on the page in the results" do
-      page.assert_no_text(@brando.name)
-      page.assert_no_selector("a[href='#{rubygem_path(@brando)}']")
+      refute_text @brando.name
+      refute_selector "a[href='#{rubygem_path(@brando.slug)}']"
     end
     should "display pagination summary" do
-      page.assert_text("all 2 gems")
+      assert page.has_text?("all 2 gems")
     end
     should "not see suggestions" do
-      page.assert_no_text("Did you mean")
-      page.assert_no_selector(".search-suggestions")
+      refute_text "Did you mean"
+      refute_selector ".search-suggestions"
     end
   end
 
@@ -89,6 +92,7 @@ class SearchesControllerTest < ActionController::TestCase
     end
 
     should respond_with :success
+
     should "see no results" do
       refute page.has_content?("Results")
     end
@@ -108,19 +112,19 @@ class SearchesControllerTest < ActionController::TestCase
 
     should respond_with :success
     should "see sinatra on the page in the suggestions" do
-      page.assert_text("Did you mean")
-      assert page.find(".search__suggestions").has_content?(@sinatra.name)
-      assert page.has_selector?("a[href='#{search_path(query: @sinatra.name)}']")
+      assert_text "Did you mean"
+      assert_text @sinatra.name, page.find(".search__suggestions")
+      assert_selector "a[href='#{search_path(query: @sinatra.name)}']"
     end
     should "not see sinatra on the page in the results" do
-      page.assert_no_selector("a[href='#{rubygem_path(@sinatra)}']")
+      refute_selector "a[href='#{rubygem_path(@sinatra.slug)}']"
     end
     should "not see brando on the page in the results" do
-      page.assert_no_text(@brando.name)
-      page.assert_no_selector("a[href='#{rubygem_path(@brando)}']")
+      refute_text @brando.name
+      refute_selector "a[href='#{rubygem_path(@brando.slug)}']"
     end
     should "not see filters" do
-      page.assert_no_text("Filter")
+      refute_text "Filter"
     end
   end
 
@@ -135,11 +139,12 @@ class SearchesControllerTest < ActionController::TestCase
     end
 
     should respond_with :success
+
     should "see sinatra_redux on the page in the results" do
-      page.assert_selector("a[href='#{rubygem_path(@sinatra_redux)}']")
+      assert_selector "a[href='#{rubygem_path(@sinatra_redux.slug)}']"
     end
     should "not see sinatra on the page in the results" do
-      page.assert_no_selector("a[href='#{rubygem_path(@sinatra)}']")
+      refute_selector "a[href='#{rubygem_path(@sinatra.slug)}']"
     end
   end
 
@@ -150,13 +155,13 @@ class SearchesControllerTest < ActionController::TestCase
       create(:version, rubygem: @sinatra)
       create(:version, rubygem: @sinatra_redux)
     end
-    should "fallback to legacy search" do
+    should "error with friendly error message" do
       requires_toxiproxy
       Toxiproxy[:elasticsearch].down do
         get :show, params: { query: "sinatra" }
+
         assert_response :success
-        assert page.has_content?("Advanced search is currently unavailable. Falling back to legacy search.")
-        assert page.has_content?("Displaying")
+        assert page.has_content?("Search is currently unavailable. Please try again later.")
       end
     end
   end

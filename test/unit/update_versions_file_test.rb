@@ -5,12 +5,11 @@ class UpdateVersionsFileTest < ActiveSupport::TestCase
     @tmp_versions_file = Tempfile.new("tmp_versions_file")
     tmp_path = @tmp_versions_file.path
     Rails.application.config.rubygems.stubs(:[]).with("versions_file_location").returns(tmp_path)
-    Gemcutter::Application.load_tasks
   end
 
   def update_versions_file
     freeze_time do
-      @created_at = Time.now.iso8601
+      @created_at = Time.now.utc.iso8601
       Rake::Task["compact_index:update_versions_file"].invoke
     end
   end
@@ -27,6 +26,7 @@ class UpdateVersionsFileTest < ActiveSupport::TestCase
 
     should "use today's timestamp as header" do
       expected_header = "created_at: #{@created_at}\n---\n"
+
       assert_equal expected_header, @tmp_versions_file.read
     end
   end
@@ -53,6 +53,7 @@ class UpdateVersionsFileTest < ActiveSupport::TestCase
 
       should "include platform release" do
         expected_output = "rubyrubyruby 0.0.1,0.0.1-jruby qw212r\n"
+
         assert_equal expected_output, @tmp_versions_file.readlines[2]
       end
     end
@@ -72,6 +73,7 @@ class UpdateVersionsFileTest < ActiveSupport::TestCase
 
       should "order by created_at and use last released version's info_checksum" do
         expected_output = "rubyrubyruby 0.0.1,0.0.2,0.0.3 13q4e1\n"
+
         assert_equal expected_output, @tmp_versions_file.readlines[2]
       end
     end
@@ -96,6 +98,7 @@ class UpdateVersionsFileTest < ActiveSupport::TestCase
 
       should "not include yanked version" do
         expected_output = "rubyrubyruby 0.0.1 qw212r\n"
+
         assert_equal expected_output, @tmp_versions_file.readlines[2]
       end
     end
@@ -126,6 +129,7 @@ class UpdateVersionsFileTest < ActiveSupport::TestCase
 
       should "not include yanked version" do
         expected_output = "rubyrubyruby 0.1.1,0.1.3 zab45d\n"
+
         assert_equal expected_output, @tmp_versions_file.readlines[2]
       end
     end

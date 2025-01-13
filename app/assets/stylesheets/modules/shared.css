@@ -177,10 +177,24 @@ a.page__heading {
   margin-top: 15px; }
 
 /* style used to be applied on iframe of github_buttons */
-span#github-btn {
+span.github-btn {
   display: block;
   margin-bottom: 15px;
   margin-top: 5px;
+}
+
+.recovery-code-list {
+  border: none;
+  padding: 10px 20px;
+  font-size: 1.2em;
+  font-family: SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
+  resize: none;
+  background: none;
+}
+
+.recovery-code-list:focus {
+  background: none;
+  outline: none;
 }
 
 .recovery-code-list__item {
@@ -208,49 +222,12 @@ span#github-btn {
   font-weight: 800;
 }
 
-.adoption__tag {
-  display: inline-block;
-  font-size: 0.8em;
-  font-weight: 800;
+.description__heading {
   color: #e9573f;
-  border: 1px solid #e9573f;
-  border-radius: 8px;
-  padding: 0.25em 1em;
-  margin-bottom: 0.9em;
-  vertical-align: 0.3em;
-  transition: color 0.25s ease-in,
-    background-color 0.25s ease-in,
-    transform 0.3s ease-out;
-}
-
-.adoption__tag:hover{
-  color: white;
-  background-color: #e9573f;
-}
-
-.adoption__heading {
-  color: #e9573f;
-}
-
-.t-body h2.adoption__heading--no-padding {
-  padding-top: 0px;
-}
-
-.adoption__blog__link {
-  color: #e9573f;
-  text-decoration: underline;
-  font-size: 0.6em;
-  font-weight: bold;
-}
-
-.adoption__rdoc__link {
-  text-decoration: underline;
-  font-weight: bold;
 }
 
 .tooltip__text {
   color: #e9573f;
-  font-size: 0.7em;
   vertical-align: text-bottom;
   cursor: pointer;
   position: relative;
@@ -266,4 +243,8 @@ span#github-btn {
   color: white;
   padding: .25em .5em;
   font-size: .8em;
+}
+
+.tooltip__text--reduced-font-size {
+  font-size: 0.7em;
 }

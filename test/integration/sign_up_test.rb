@@ -10,6 +10,21 @@ class SignUpTest < SystemTest
     click_button "Sign up"
 
     assert page.has_selector? "#flash_notice", text: "A confirmation mail has been sent to your email address."
+    assert_event Events::UserEvent::CREATED, { email: "email@person.com" },
+      User.find_by(handle: "nick").events.where(tag: Events::UserEvent::CREATED).sole
+  end
+
+  test "sign up stores original email casing" do
+    visit sign_up_path
+
+    fill_in "Email", with: "Email@person.com"
+    fill_in "Username", with: "nick"
+    fill_in "Password", with: PasswordHelpers::SECURE_TEST_PASSWORD
+    click_button "Sign up"
+
+    assert page.has_selector? "#flash_notice", text: "A confirmation mail has been sent to your email address."
+
+    assert_equal "Email@person.com", User.last.email
   end
 
   test "sign up with no handle" do
@@ -50,6 +65,7 @@ class SignUpTest < SystemTest
     Rails.application.reload_routes!
 
     visit root_path
+
     refute page.has_content? "Sign up"
     assert_raises(ActionController::RoutingError) do
       visit "/sign_up"
@@ -68,14 +84,24 @@ class SignUpTest < SystemTest
     fill_in "Email", with: "email@person.com"
     fill_in "Username", with: "nick"
     fill_in "Password", with: PasswordHelpers::SECURE_TEST_PASSWORD
-    click_button "Sign up"
+
+    perform_enqueued_jobs only: ActionMailer::MailDeliveryJob do
+      click_button "Sign up"
+    end
 
     link = last_email_link
+
     assert_not_nil link
     visit link
 
-    assert page.has_content? "Sign out"
+    assert page.has_content? "Sign in"
     assert page.has_selector? "#flash_notice", text: "Your email address has been verified"
+
+    fill_in "Email or Username", with: "email@person.com"
+    fill_in "Password", with: PasswordHelpers::SECURE_TEST_PASSWORD
+    click_button "Sign in"
+
+    assert page.has_content? "Sign out"
   end
 
   teardown do

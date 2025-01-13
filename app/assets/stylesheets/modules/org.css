@@ -1,19 +1,25 @@
 /* Flash Intercoms */
 
 .flash {
-  border-bottom: 1px solid #e9573f;
-  background-color: white; }
+  border-bottom: 1px solid #dcd3b1;
+  background-color: white;
+}
 
 .flash-wrap {
-  padding-top: 5px;
-  padding-bottom: 5px;
-  background-image: linear-gradient(to right, rgba(233, 87, 63, 0.3), #e9573f); }
+  padding: 10px 0;
+  background-color: #fff6d2;
+}
 
 .flash-wrap span {
   font-size: 13px;
-  font-style: italic;
-  color: #141c22; }
+  color: #141c22;
+}
 
+.flash a {
+  color: #141c22;
+  text-decoration: underline;
+  font-weight: bold;
+}
 /* Announcement Styles */
 
 #announcement {
@@ -145,6 +151,11 @@
     .profile__header__name {
       padding-top: 16px; } }
 
+.profile__header__username {
+  overflow-x: auto; }
+@media (min-width: 780px) {
+  .profile__header__username {
+    padding-top: 4px; } }
 
 @media (max-width: 779px) {
   .profile__header__avatar {
@@ -155,7 +166,8 @@
     height: 150px;
     width: 150px;
     float: left;
-    border-radius: 50%; } }
+    border-radius: 50%;
+    margin-bottom: 21px; } }
 
 .profile__header__attribute {
   padding-top: 10px;
@@ -166,10 +178,11 @@
     top: 1px; }
 
 .profile__header__icon {
-  height: 28px;
+  height: 14px;
   float: left;
-  margin-top: 3px;
-  margin-left: -5px; }
+  margin-top: 12px;
+  margin-left: 1px;
+  padding-right: 7px; }
 
 @media (max-width: 599px) {
   .profile__downloads-wrap {
@@ -254,3 +267,20 @@
     float: right; }
   .about__assets__download:focus:before, .about__assets__download:hover:before {
     animation: arrow .75s infinite; }
+
+/* Banner */
+
+#banner {
+  background-color: #141c22;
+  text-align: center;
+  padding: 12px 0;
+  font-weight: 500;
+  font-size: 16px;
+  color: white;
+}
+
+#banner a {
+  color: #e9573f;
+  text-decoration: underline;
+  font-weight: bold;
+}

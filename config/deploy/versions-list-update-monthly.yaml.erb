@@ -1,4 +1,4 @@
-apiVersion: batch/v1beta1
+apiVersion: batch/v1
 kind: CronJob
 metadata:
   name: versions-list-update-monthly
@@ -13,11 +13,14 @@ spec:
         metadata:
           labels:
             name: versions-list-update-monthly
+            tags.datadoghq.com/env: "<%= environment %>"
+            tags.datadoghq.com/service: rubygems.org
+            tags.datadoghq.com/version: <%= current_sha %>
         spec:
           restartPolicy: "OnFailure"
           containers:
           - name: versions-list-update-monthly
-            image: quay.io/rubygems/rubygems.org:<%= current_sha %>
+            image: 048268392960.dkr.ecr.us-west-2.amazonaws.com/rubygems/rubygems.org:<%= current_sha %>
             args: ["rake", "compact_index:update_versions_file"]
             resources:
               <% if environment == 'production' %>
@@ -40,6 +43,11 @@ spec:
               value: "<%= environment %>"
             - name: ENV
               value: "<%= environment %>"
+            - name: DD_AGENT_HOST
+              valueFrom:
+                fieldRef:
+                  apiVersion: v1
+                  fieldPath: status.hostIP
             - name: STATSD_IMPLEMENTATION
               value: "datadog"
             - name: STATSD_HOST
@@ -76,11 +84,6 @@ spec:
                 secretKeyRef:
                   name: <%= environment %>
                   key: aws_secret_access_key
-            - name: NEW_RELIC_LICENSE_KEY
-              valueFrom:
-                secretKeyRef:
-                  name: <%= environment %>
-                  key: new_relic_license_key
             - name: HONEYBADGER_API_KEY
               valueFrom:
                 secretKeyRef:

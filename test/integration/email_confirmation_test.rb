@@ -2,6 +2,8 @@ require "test_helper"
 require "helpers/email_helpers"
 
 class EmailConfirmationTest < SystemTest
+  include ActiveJob::TestHelper
+
   setup do
     @user = create(:user)
   end
@@ -24,47 +26,122 @@ class EmailConfirmationTest < SystemTest
     request_confirmation_mail @user.email
 
     link = last_email_link
+
     assert_not_nil link
     visit link
 
-    assert page.has_content? "Sign out"
+    assert page.has_content? "Sign in"
     assert page.has_selector? "#flash_notice", text: "Your email address has been verified"
   end
 
-  test "re-using confirmation link does not sign in user" do
+  test "re-using confirmation link, asks user to double check the link" do
     request_confirmation_mail @user.email
 
     link = last_email_link
     visit link
-    click_link "Sign out"
+
+    assert page.has_content? "Sign in"
+    assert page.has_selector? "#flash_notice", text: "Your email address has been verified"
 
     visit link
+
     assert page.has_content? "Sign in"
     assert page.has_selector? "#flash_alert", text: "Please double check the URL or try submitting it again."
   end
 
   test "requesting multiple confirmation email" do
-    request_confirmation_mail @user.email
+    perform_enqueued_jobs only: ActionMailer::MailDeliveryJob do
+      request_confirmation_mail @user.email
+    end
     request_confirmation_mail @user.email
 
-    link = confirmation_link_from(Delayed::Job.first)
+    performed = 0
+    perform_enqueued_jobs only: ->(job) { job.is_a?(ActionMailer::MailDeliveryJob) && (performed += 1) == 1 }
+    link = confirmation_link
     visit link
 
-    Delayed::Worker.new.work_off
-    assert_empty Delayed::Job.all
+    perform_enqueued_jobs only: ActionMailer::MailDeliveryJob
+
+    assert_no_enqueued_jobs
   end
 
   test "requesting confirmation mail with mfa enabled" do
-    @user.enable_mfa!(ROTP::Base32.random_base32, :ui_only)
+    @user.enable_totp!(ROTP::Base32.random_base32, :ui_only)
     request_confirmation_mail @user.email
 
     link = last_email_link
+
     assert_not_nil link
     visit link
 
-    fill_in "otp", with: ROTP::TOTP.new(@user.mfa_seed).now
+    fill_in "otp", with: ROTP::TOTP.new(@user.totp_seed).now
     click_button "Authenticate"
 
-    assert page.has_content? "Sign out"
+    assert page.has_content? "Sign in"
+    assert page.has_selector? "#flash_notice", text: "Your email address has been verified"
+  end
+
+  test "requesting confirmation mail with webauthn enabled" do
+    create_webauthn_credential
+
+    request_confirmation_mail @user.email
+
+    link = last_email_link
+
+    assert_not_nil link
+    visit link
+
+    assert page.has_content? "Multi-factor authentication"
+    assert page.has_content? "Security Device"
+
+    click_on "Authenticate with security device"
+
+    assert page.has_content? "Sign in"
+    skip("There's a glitch where the webauthn javascript(?) triggers the next page to render twice, clearing flash.")
+
+    assert page.has_selector? "#flash_notice", text: "Your email address has been verified"
+  end
+
+  test "requesting confirmation mail with webauthn enabled using recovery codes" do
+    create_webauthn_credential
+
+    request_confirmation_mail @user.email
+
+    link = last_email_link
+
+    assert_not_nil link
+    visit link
+
+    assert page.has_content? "Multi-factor authentication"
+    assert page.has_content? "Security Device"
+
+    fill_in "otp", with: @mfa_recovery_codes.first
+    click_button "Authenticate"
+
+    assert page.has_content? "Sign in"
+    assert page.has_selector? "#flash_notice", text: "Your email address has been verified"
+  end
+
+  test "requesting confirmation mail with mfa enabled, but mfa session is expired" do
+    @user.enable_totp!(ROTP::Base32.random_base32, :ui_and_gem_signin)
+    request_confirmation_mail @user.email
+
+    link = last_email_link
+
+    assert_not_nil link
+    visit link
+
+    fill_in "otp", with: ROTP::TOTP.new(@user.totp_seed).now
+    travel 16.minutes do
+      click_button "Authenticate"
+
+      assert page.has_content? "Your login page session has expired."
+    end
+  end
+
+  teardown do
+    @authenticator&.remove!
+    Capybara.reset_sessions!
+    Capybara.use_default_driver
   end
 end

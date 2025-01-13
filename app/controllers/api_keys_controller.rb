@@ -1,11 +1,15 @@
 class ApiKeysController < ApplicationController
+  before_action :disable_cache, only: :index
+  before_action :set_page, only: :index
+
   include ApiKeyable
-  before_action :redirect_to_signin, unless: :signed_in?
-  before_action :redirect_to_verify, unless: :password_session_active?
+
+  include SessionVerifiable
+  verify_session_before
 
   def index
     @api_key  = session.delete(:api_key)
-    @api_keys = current_user.api_keys
+    @api_keys = current_user.api_keys.unexpired.not_oidc.preload(ownership: :rubygem).page(@page)
     redirect_to new_profile_api_key_path if @api_keys.empty?
   end
 
@@ -13,40 +17,57 @@ class ApiKeysController < ApplicationController
     @api_key = current_user.api_keys.build
   end
 
+  def edit
+    @api_key = current_user.api_keys.find(params[:id])
+    return unless @api_key.soft_deleted?
+
+    flash[:error] = t(".invalid_key")
+    redirect_to profile_api_keys_path
+  end
+
   def create
     key = generate_unique_rubygems_key
-    @api_key = current_user.api_keys.build(api_key_params.merge(hashed_key: hashed_key(key)))
+    build_params = { owner: current_user, hashed_key: hashed_key(key), **api_key_create_params }
+    @api_key = ApiKey.new(build_params)
+
+    if @api_key.errors.present?
+      flash.now[:error] = @api_key.errors.full_messages.to_sentence
+      @api_key = current_user.api_keys.build(api_key_create_params.merge(rubygem_id: nil))
+      return render :new
+    end
 
     if @api_key.save
-      Mailer.delay.api_key_created(@api_key.id)
+      Mailer.api_key_created(@api_key.id).deliver_later
 
       session[:api_key] = key
       redirect_to profile_api_keys_path, flash: { notice: t(".success") }
     else
-      flash[:error] = @api_key.errors.full_messages.to_sentence
+      flash.now[:error] = @api_key.errors.full_messages.to_sentence
       render :new
     end
   end
 
-  def edit
-    @api_key = current_user.api_keys.find(params.require(:id))
-  end
-
   def update
-    @api_key = current_user.api_keys.find(params.require(:id))
+    @api_key = current_user.api_keys.find(params[:id])
+    @api_key.assign_attributes(api_key_update_params(@api_key))
 
-    if @api_key.update(api_key_params)
+    if @api_key.errors.present?
+      flash.now[:error] = @api_key.errors.full_messages.to_sentence
+      return render :edit
+    end
+
+    if @api_key.save
       redirect_to profile_api_keys_path, flash: { notice: t(".success") }
     else
-      flash[:error] = @api_key.errors.full_messages.to_sentence
+      flash.now[:error] = @api_key.errors.full_messages.to_sentence
       render :edit
     end
   end
 
   def destroy
-    api_key = current_user.api_keys.find(params.require(:id))
+    api_key = current_user.api_keys.find(params[:id])
 
-    if api_key.destroy
+    if api_key.expire!
       flash[:notice] = t(".success", name: api_key.name)
     else
       flash[:error] = api_key.errors.full_messages.to_sentence
@@ -55,7 +76,7 @@ class ApiKeysController < ApplicationController
   end
 
   def reset
-    if current_user.api_keys.destroy_all
+    if current_user.api_keys.expire_all!
       flash[:notice] = t(".success")
     else
       flash[:error] = t("try_again")
@@ -65,12 +86,26 @@ class ApiKeysController < ApplicationController
 
   private
 
-  def api_key_params
-    params.require(:api_key).permit(:name, *ApiKey::API_SCOPES, :mfa)
+  def verify_session_redirect_path
+    case action_name
+    when "reset", "destroy"
+      profile_api_keys_path
+    when "create"
+      new_profile_api_key_path
+    when "update"
+      edit_profile_api_key_path(params[:id])
+    else
+      super
+    end
   end
 
-  def redirect_to_verify
-    session[:redirect_uri] = profile_api_keys_path
-    redirect_to verify_session_path
+  def api_key_create_params
+    ApiKeysHelper.api_key_params(params.expect(api_key: [:name, *ApiKey::API_SCOPES, :mfa, :rubygem_id, :expires_at]))
+  end
+
+  def api_key_update_params(existing_api_key = nil)
+    ApiKeysHelper.api_key_params(
+      params.expect(api_key: [*ApiKey::API_SCOPES, :mfa, :rubygem_id, scopes: ApiKey::API_SCOPES]), existing_api_key
+    )
   end
 end

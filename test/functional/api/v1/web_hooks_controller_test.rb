@@ -3,9 +3,14 @@ require "test_helper"
 class Api::V1::WebHooksControllerTest < ActionController::TestCase
   def self.should_not_find_it
     should respond_with :not_found
+
     should "say gem is not found" do
       assert page.has_content?("could not be found")
     end
+  end
+
+  setup do
+    NotifyWebHookJob.any_instance.stubs(:sleep)
   end
 
   context "with incorrect api key" do
@@ -13,23 +18,27 @@ class Api::V1::WebHooksControllerTest < ActionController::TestCase
       should "forbid access when creating a web hook" do
         rubygem = create(:rubygem)
         post :create, params: { gem_name: rubygem.name, url: "http://example.com" }
+
         assert_includes @response.body, "Access Denied"
         assert_predicate WebHook.count, :zero?
       end
 
       should "forbid access when listing hooks" do
         get :index
+
         assert_includes @response.body, "Access Denied"
       end
 
       should "forbid access when firing hooks" do
         post :fire, params: { gem_name: WebHook::GLOBAL_PATTERN, url: "http://example.com" }
+
         assert_includes @response.body, "Access Denied"
       end
 
       should "forbid access when removing a web hook" do
         hook = create(:web_hook)
         delete :remove, params: { gem_name: hook.rubygem.name, url: hook.url }
+
         assert_includes @response.body, "Access Denied"
         assert_equal 1, WebHook.count
       end
@@ -55,6 +64,7 @@ class Api::V1::WebHooksControllerTest < ActionController::TestCase
       should respond_with :success
       should "be able to parse body" do
         payload = yield(@response.body)
+
         assert_equal @global_hook.payload, payload["all gems"].first
         assert_equal @rubygem_hook.payload, payload[@rubygem.name].first
       end
@@ -64,7 +74,7 @@ class Api::V1::WebHooksControllerTest < ActionController::TestCase
   context "with webhook actions api key scope" do
     setup do
       @url = "http://example.org"
-      @user = create(:api_key, key: "12342", access_webhooks: true).user
+      @user = create(:api_key, key: "12342", scopes: %i[access_webhooks]).user
 
       @request.env["HTTP_AUTHORIZATION"] = "12342"
     end
@@ -77,13 +87,25 @@ class Api::V1::WebHooksControllerTest < ActionController::TestCase
 
       context "On POST to fire for all gems" do
         setup do
-          RestClient.stubs(:post)
+          stub_request(:post, "https://api.hookrelay.dev/hooks///webhook_id-fire")
+            .with(headers: {
+                    "Content-Type" => "application/json",
+                "HR_TARGET_URL" => @url,
+                "HR_MAX_ATTEMPTS" => "1"
+                  }).to_return(status: 200, body: '{"id":"delivery-id"}', headers: { "Content-Type" => "application/json" })
+
+          stub_request(:get, "https://app.hookrelay.dev/api/v1/accounts//hooks//deliveries/delivery-id")
+            .to_return(status: 200, body: { "status" => "success", "responses" => [
+              { "code" => 200, "body" => "OK", "headers" => { "Content-Type" => "text/plain" } }
+            ] }.to_json, headers: { "Content-Type" => "application/json" })
+
           post :fire, params: { gem_name: WebHook::GLOBAL_PATTERN,
                                 url: @url }
         end
         should respond_with :success
         should "say successfully deployed" do
           content = "Successfully deployed webhook for #{@gemcutter.name} to #{@url}"
+
           assert page.has_content?(content)
           assert_predicate WebHook.count, :zero?
         end
@@ -91,13 +113,24 @@ class Api::V1::WebHooksControllerTest < ActionController::TestCase
 
       context "On POST to fire for all gems that fails" do
         setup do
-          RestClient.stubs(:post).raises(RestClient::Exception.new)
+          stub_request(:post, "https://api.hookrelay.dev/hooks///webhook_id-fire")
+            .with(headers: {
+                    "Content-Type" => "application/json",
+                "HR_TARGET_URL" => @url,
+                "HR_MAX_ATTEMPTS" => "1"
+                  }).to_return(status: 200, body: '{"id":"delivery-id"}', headers: { "Content-Type" => "application/json" })
+
+          stub_request(:get, "https://app.hookrelay.dev/api/v1/accounts//hooks//deliveries/delivery-id")
+            .to_return(status: 200, body: { "status" => "failure",
+"failure_reason" => "timed out" }.to_json, headers: { "Content-Type" => "application/json" })
+
           post :fire, params: { gem_name: WebHook::GLOBAL_PATTERN,
                                 url: @url }
         end
         should respond_with :bad_request
         should "say there was a problem" do
           content = "There was a problem deploying webhook for #{@gemcutter.name} to #{@url}"
+
           assert page.has_content?(content)
           assert_predicate WebHook.count, :zero?
         end
@@ -110,6 +143,7 @@ class Api::V1::WebHooksControllerTest < ActionController::TestCase
         should respond_with :bad_request
         should "say url was not provided" do
           content = "URL was not provided"
+
           assert page.has_content?(content)
         end
       end
@@ -123,7 +157,18 @@ class Api::V1::WebHooksControllerTest < ActionController::TestCase
 
       context "On POST to fire for a specific gem" do
         setup do
-          RestClient.stubs(:post)
+          stub_request(:post, "https://api.hookrelay.dev/hooks///webhook_id-fire")
+            .with(headers: {
+                    "Content-Type" => "application/json",
+                "HR_TARGET_URL" => @url,
+                "HR_MAX_ATTEMPTS" => "1"
+                  }).to_return(status: 200, body: '{"id":"delivery-id"}', headers: { "Content-Type" => "application/json" })
+
+          stub_request(:get, "https://app.hookrelay.dev/api/v1/accounts//hooks//deliveries/delivery-id")
+            .to_return(status: 200, body: { "status" => "success", "responses" => [
+              { "code" => 200, "body" => "OK", "headers" => { "Content-Type" => "text/plain" } }
+            ] }.to_json, headers: { "Content-Type" => "application/json" })
+
           post :fire, params: { gem_name: @rubygem.name,
                                 url: @url }
         end
@@ -136,13 +181,24 @@ class Api::V1::WebHooksControllerTest < ActionController::TestCase
 
       context "On POST to fire for a specific gem that fails" do
         setup do
-          RestClient.stubs(:post).raises(RestClient::Exception.new)
+          stub_request(:post, "https://api.hookrelay.dev/hooks///webhook_id-fire")
+            .with(headers: {
+                    "Content-Type" => "application/json",
+                "HR_TARGET_URL" => @url,
+                "HR_MAX_ATTEMPTS" => "1"
+                  }).to_return(status: 200, body: '{"id":"delivery-id"}', headers: { "Content-Type" => "application/json" })
+
+          stub_request(:get, "https://app.hookrelay.dev/api/v1/accounts//hooks//deliveries/delivery-id")
+            .to_return(status: 200, body: { "status" => "failure",
+"failure_reason" => "exceeded", "responses" => [{ "code" => 404 }] }.to_json, headers: { "Content-Type" => "application/json" })
+
           post :fire, params: { gem_name: @rubygem.name,
                                 url: @url }
         end
         should respond_with :bad_request
         should "say there was a problem" do
           content = "There was a problem deploying webhook for #{@rubygem.name} to #{@url}"
+
           assert page.has_content?(content)
           assert_predicate WebHook.count, :zero?
         end
@@ -174,6 +230,7 @@ class Api::V1::WebHooksControllerTest < ActionController::TestCase
           should respond_with :success
           should "say webhook was removed" do
             content = "Successfully removed webhook for #{@rubygem.name} to #{@rubygem_hook.url}"
+
             assert page.has_content?(content)
           end
           should "have actually removed the webhook" do
@@ -192,6 +249,7 @@ class Api::V1::WebHooksControllerTest < ActionController::TestCase
           should respond_with :success
           should "say webhook was removed" do
             content = "Successfully removed webhook for all gems to #{@global_hook.url}"
+
             assert page.has_content?(content)
           end
           should "have actually removed the webhook" do
@@ -215,6 +273,7 @@ class Api::V1::WebHooksControllerTest < ActionController::TestCase
           end
 
           should respond_with :not_found
+
           should "say webhook was not found" do
             assert page.has_content?("No such webhook exists under your account.")
           end
@@ -230,6 +289,7 @@ class Api::V1::WebHooksControllerTest < ActionController::TestCase
           end
 
           should respond_with :not_found
+
           should "say webhook was not found" do
             assert page.has_content?("No such webhook exists under your account.")
           end
@@ -245,6 +305,7 @@ class Api::V1::WebHooksControllerTest < ActionController::TestCase
         end
 
         should respond_with :created
+
         should "say webhook was created" do
           assert page.has_content?("Successfully created webhook for #{@rubygem.name} to #{@url}")
         end
@@ -306,6 +367,7 @@ class Api::V1::WebHooksControllerTest < ActionController::TestCase
       end
 
       should respond_with :conflict
+
       should "be only 1 web hook" do
         assert_equal 1, WebHook.count
       end

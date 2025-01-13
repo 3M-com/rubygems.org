@@ -11,13 +11,16 @@ class RubygemsHelperTest < ActionView::TestCase
     end
     should "singular if version has one license" do
       @version.stubs(:licenses).returns(["MIT"])
+
       assert_equal "License", pluralized_licenses_header(@version)
     end
     should "plural if version has no license or more than one license" do
       @version.stubs(:licenses)
+
       assert_equal "Licenses", pluralized_licenses_header(@version)
 
       @version.stubs(:licenses).returns(%w[MIT GPL-2])
+
       assert_equal "Licenses", pluralized_licenses_header(@version)
     end
   end
@@ -34,6 +37,7 @@ class RubygemsHelperTest < ActionView::TestCase
 
   should "create the directory" do
     directory = link_to_directory
+
     ("A".."Z").each do |letter|
       assert_match rubygems_path(letter: letter), directory
     end
@@ -43,16 +47,20 @@ class RubygemsHelperTest < ActionView::TestCase
     rubygem = stub
     rubygem.stubs(:versions_count).returns 6
     rubygem.stubs(:yanked_versions?).returns false
+
     assert show_all_versions_link?(rubygem)
     rubygem.stubs(:versions_count).returns 1
     rubygem.stubs(:yanked_versions?).returns false
+
     refute show_all_versions_link?(rubygem)
     rubygem.stubs(:yanked_versions?).returns true
+
     assert show_all_versions_link?(rubygem)
   end
 
   should "show a nice formatted date" do
     time = Time.zone.parse("2011-03-18T00:00:00-00:00")
+
     assert_equal "March 18, 2011", nice_date_for(time)
   end
 
@@ -102,30 +110,33 @@ class RubygemsHelperTest < ActionView::TestCase
     end
 
     should "create links to owners gem overviews" do
-      users = Array.new(2) { create(:user) }
+      users = create_list(:user, 2)
       @rubygem = create(:rubygem, owners: users)
 
       expected_links = users.sort_by(&:id).map do |u|
-        link_to gravatar(48, "gravatar-#{u.id}", u),
+        link_to avatar(48, "gravatar-#{u.id}", u),
           profile_path(u.display_id),
           alt: u.display_handle,
           title: u.display_handle
       end.join
+
       assert_equal expected_links, links_to_owners(@rubygem)
       assert_predicate links_to_owners(@rubygem), :html_safe?
     end
 
     should "create links to gem owners without mfa" do
-      with_mfa = create(:user, mfa_level: "ui_and_api")
-      without_mfa = create_list(:user, 2, mfa_level: "disabled")
+      with_mfa = create(:user)
+      with_mfa.enable_totp!(ROTP::Base32.random_base32, :ui_and_api)
+      without_mfa = create_list(:user, 2)
       rubygem = create(:rubygem, owners: [*without_mfa, with_mfa])
 
       expected_links = without_mfa.sort_by(&:id).map do |u|
-        link_to gravatar(48, "gravatar-#{u.id}", u),
+        link_to avatar(48, "gravatar-#{u.id}", u),
           profile_path(u.display_id),
           alt: u.display_handle,
           title: u.display_handle
       end.join
+
       assert_equal expected_links, links_to_owners_without_mfa(rubygem)
       assert_predicate links_to_owners_without_mfa(rubygem), :html_safe?
     end
@@ -134,18 +145,21 @@ class RubygemsHelperTest < ActionView::TestCase
   context "simple_markup" do
     should "sanitize copy" do
       text = '<script>alert("foo");</script>Rails authentication & authorization'
+
       assert_equal "<p>alert(&quot;foo&quot;);Rails authentication &amp; authorization</p>", simple_markup(text)
       assert_predicate simple_markup(text), :html_safe?
     end
 
     should "work on rdoc strings" do
       text = "== FOO"
+
       assert_equal "\n<h2>FOO</h2>\n", simple_markup(text)
       assert_predicate simple_markup(text), :html_safe?
     end
 
     should "sanitize rdoc strings" do
       text = "== FOO\nclick[javascript:alert('foo')]"
+
       assert_equal "\n<h2>FOO</h2>\n\n<p><a>click</a></p>\n", simple_markup(text)
 
       assert_predicate simple_markup(text), :html_safe?
@@ -190,6 +204,21 @@ class RubygemsHelperTest < ActionView::TestCase
       should "return parsed uri" do
         assert_equal URI(@github_link), link_to_github(@rubygem)
       end
+    end
+  end
+
+  context "oidc_api_key_role_links" do
+    should "return joined links" do
+      user = create(:user)
+      rubygem = create(:rubygem, name: "my_gem", owners: [user])
+      role = create(:oidc_api_key_role, name: "Push my_gem", api_key_permissions: { gems: ["my_gem"], scopes: ["push_rubygem"] }, user: user)
+      stubs(:current_user).returns(user)
+
+      role_link = link_to "OIDC: #{role.name}", profile_oidc_api_key_role_path(role.token), class: "gem__link t-list__item"
+      create_link = link_to "OIDC: Create", new_profile_oidc_api_key_role_path(rubygem: rubygem.name, scopes: ["push_rubygem"]),
+        class: "gem__link t-list__item"
+
+      assert_equal safe_join([role_link, create_link]), oidc_api_key_role_links(rubygem)
     end
   end
 

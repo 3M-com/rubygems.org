@@ -1,6 +1,9 @@
 # frozen_string_literal: true
 
 class SendgridEvent < ApplicationRecord
+  enum :status, %i[pending processed].index_with(&:to_s)
+  enum :event_type, %i[delivered dropped bounce].index_with(&:to_s)
+
   # To make allowances for occasional inbox down time, this counts a maximum of one fail per day,
   # e.g.:
   #
@@ -22,10 +25,8 @@ class SendgridEvent < ApplicationRecord
   end
 
   def self.process_later(payload)
-    return if exists?(sendgrid_id: payload[:sg_event_id])
-
     transaction do
-      event = create!(
+      sendgrid_event = create!(
         sendgrid_id: payload[:sg_event_id],
         email: payload[:email],
         event_type: payload[:event],
@@ -33,8 +34,10 @@ class SendgridEvent < ApplicationRecord
         payload: payload,
         status: "pending"
       )
-      delay.process(event.id)
+      ProcessSendgridEventJob.perform_later(sendgrid_event:)
     end
+  rescue ActiveRecord::RecordNotUnique
+    nil
   end
 
   def self.process(id)
@@ -49,11 +52,7 @@ class SendgridEvent < ApplicationRecord
         fails_count = self.class.fails_since_last_delivery(email)
         User.where(email: email).update_all(mail_fails: fails_count)
       end
-      update_attribute(:status, "processed")
+      update_attribute(:status, :processed)
     end
-  end
-
-  def pending?
-    status == "pending"
   end
 end

@@ -1,11 +1,15 @@
 require "test_helper"
 
 class Api::V1::RubygemsControllerTest < ActionController::TestCase
+  include ActiveJob::TestHelper
+
   should "route old paths to new controller" do
     get_route = { controller: "api/v1/rubygems", action: "show", id: "rails", format: "json" }
+
     assert_recognizes(get_route, "/api/v1/gems/rails.json")
 
     post_route = { controller: "api/v1/rubygems", action: "create" }
+
     assert_recognizes(post_route, path: "/api/v1/gems", method: :post)
   end
 
@@ -13,40 +17,31 @@ class Api::V1::RubygemsControllerTest < ActionController::TestCase
     should respond_with :success
     should "return a hash" do
       response = yield(@response.body) if block_given?
+
       assert_not_nil response
       assert_kind_of Hash, response
     end
   end
 
-  def self.should_respond_to(format, &block)
+  def self.should_respond_to(format, &blk)
     context "with #{format.to_s.upcase} for a hosted gem" do
       setup do
         @rubygem = create(:rubygem)
         create(:version, rubygem: @rubygem)
-        get :show, params: { id: @rubygem.to_param }, format: format
+        get :show, params: { id: @rubygem.slug }, format: format
       end
 
-      should_respond_to_show(&block)
+      should_respond_to_show(&blk)
     end
 
     context "with #{format.to_s.upcase} for a hosted gem with a period in its name" do
       setup do
         @rubygem = create(:rubygem, name: "foo.rb")
         create(:version, rubygem: @rubygem)
-        get :show, params: { id: @rubygem.to_param }, format: format
+        get :show, params: { id: @rubygem.slug }, format: format
       end
 
-      should_respond_to_show(&block)
-    end
-
-    context "with #{format.to_s.upcase} for a gem that doesn't match the slug" do
-      setup do
-        @rubygem = create(:rubygem, name: "ZenTest", slug: "zentest")
-        create(:version, rubygem: @rubygem)
-        get :show, params: { id: "ZenTest" }, format: format
-      end
-
-      should_respond_to_show(&block)
+      should_respond_to_show(&blk)
     end
   end
 
@@ -69,11 +64,13 @@ class Api::V1::RubygemsControllerTest < ActionController::TestCase
     context "On GET to show for a gem that not hosted" do
       setup do
         @rubygem = create(:rubygem)
+
         assert_predicate @rubygem.versions.count, :zero?
-        get :show, params: { id: @rubygem.to_param }, format: "json"
+        get :show, params: { id: @rubygem.slug }, format: "json"
       end
 
       should respond_with :not_found
+
       should "say gem could not be found" do
         assert_equal "This rubygem could not be found.", @response.body
       end
@@ -82,11 +79,13 @@ class Api::V1::RubygemsControllerTest < ActionController::TestCase
     context "On GET to show for a gem that doesn't exist" do
       setup do
         @name = generate(:name)
+
         refute Rubygem.exists?(name: @name)
         get :show, params: { id: @name }, format: "json"
       end
 
       should respond_with :not_found
+
       should "say the rubygem was not found" do
         assert_match(/not be found/, @response.body)
       end
@@ -96,10 +95,11 @@ class Api::V1::RubygemsControllerTest < ActionController::TestCase
       setup do
         @rubygem = create(:rubygem)
         create(:version, rubygem: @rubygem, number: "1.0.0", indexed: false)
-        get :show, params: { id: @rubygem.to_param }, format: "json"
+        get :show, params: { id: @rubygem.slug }, format: "json"
       end
 
       should respond_with :not_found
+
       should "say gem could not be found" do
         assert_equal "This rubygem could not be found.", @response.body
       end
@@ -116,7 +116,7 @@ class Api::V1::RubygemsControllerTest < ActionController::TestCase
         @missing_dependency.rubygem.update_column(:name, "missing")
         @missing_dependency.update_column(:rubygem_id, nil)
 
-        get :show, params: { id: @rubygem.to_param }, format: "json"
+        get :show, params: { id: @rubygem.slug }, format: "json"
       end
 
       should respond_with :success
@@ -129,7 +129,7 @@ class Api::V1::RubygemsControllerTest < ActionController::TestCase
 
   context "CORS" do
     setup do
-      rubygem = create(:rubygem, name: "ZenTest", slug: "zentest")
+      rubygem = create(:rubygem, name: "ZenTest")
       create(:version, rubygem: rubygem)
     end
 
@@ -174,11 +174,13 @@ class Api::V1::RubygemsControllerTest < ActionController::TestCase
       end
 
       should respond_with :success
+
       should "return a hash" do
         assert_not_nil yield(@response.body)
       end
       should "only return my gems" do
-        gem_names = yield(@response.body).map { |rubygem| rubygem["name"] }.sort
+        gem_names = yield(@response.body).pluck("name").sort
+
         assert_equal %w[AnotherGem SomeGem], gem_names
       end
     end
@@ -186,7 +188,7 @@ class Api::V1::RubygemsControllerTest < ActionController::TestCase
 
   context "with index and push rubygem api key scope" do
     setup do
-      @api_key = create(:api_key, key: "12345", push_rubygem: true, index_rubygems: true)
+      @api_key = create(:api_key, key: "12345", scopes: %i[push_rubygem index_rubygems])
       @user = @api_key.user
 
       @request.env["HTTP_AUTHORIZATION"] = "12345"
@@ -204,28 +206,32 @@ class Api::V1::RubygemsControllerTest < ActionController::TestCase
 
     context "When mfa for UI and API is enabled" do
       setup do
-        @user.enable_mfa!(ROTP::Base32.random_base32, :ui_and_api)
+        @user.enable_totp!(ROTP::Base32.random_base32, :ui_and_api)
       end
 
       context "On post to create for new gem without OTP" do
         setup do
-          post :create, body: gem_file.read
+          post :create, body: gem_file(&:read)
         end
         should respond_with :unauthorized
+
+        should "return body that starts with MFA enabled message" do
+          assert @response.body.start_with?("You have enabled multifactor authentication")
+        end
       end
 
       context "On post to create for new gem with incorrect OTP" do
         setup do
-          @request.env["HTTP_OTP"] = (ROTP::TOTP.new(@user.mfa_seed).now.to_i.succ % 1_000_000).to_s
-          post :create, body: gem_file.read
+          @request.env["HTTP_OTP"] = (ROTP::TOTP.new(@user.totp_seed).now.to_i.succ % 1_000_000).to_s
+          post :create, body: gem_file(&:read)
         end
         should respond_with :unauthorized
       end
 
       context "On post to create for new gem with correct OTP" do
         setup do
-          @request.env["HTTP_OTP"] = ROTP::TOTP.new(@user.mfa_seed).now
-          post :create, body: gem_file.read
+          @request.env["HTTP_OTP"] = ROTP::TOTP.new(@user.totp_seed).now
+          post :create, body: gem_file(&:read)
         end
         should respond_with :success
         should "register new gem" do
@@ -238,21 +244,21 @@ class Api::V1::RubygemsControllerTest < ActionController::TestCase
 
     context "When mfa for UI and gem signin is enabled" do
       setup do
-        @user.enable_mfa!(ROTP::Base32.random_base32, :ui_and_gem_signin)
+        @user.enable_totp!(ROTP::Base32.random_base32, :ui_and_gem_signin)
       end
 
       context "Api key has mfa enabled" do
         setup do
           @api_key.mfa = true
           @api_key.save!
-          post :create, body: gem_file.read
+          post :create, body: gem_file(&:read)
         end
         should respond_with :unauthorized
       end
 
       context "On POST to create for new gem" do
         setup do
-          post :create, body: gem_file.read
+          post :create, body: gem_file(&:read)
         end
         should respond_with :success
         should "register new gem" do
@@ -271,7 +277,7 @@ class Api::V1::RubygemsControllerTest < ActionController::TestCase
 
     context "On POST to create for new gem" do
       setup do
-        post :create, body: gem_file.read
+        post :create, body: gem_file(&:read)
       end
       should respond_with :success
       should "register new gem" do
@@ -296,19 +302,29 @@ class Api::V1::RubygemsControllerTest < ActionController::TestCase
           create(:version, rubygem: rubygem, number: "0.0.0", updated_at: 1.year.ago, created_at: 1.year.ago)
         end
         should "respond_with success" do
-          post :create, body: gem_file("test-1.0.0.gem").read
+          post :create, body: gem_file("test-1.0.0.gem", &:read)
+
           assert_response :success
         end
         should "register new version" do
-          post :create, body: gem_file("test-1.0.0.gem").read
+          post :create, body: gem_file("test-1.0.0.gem", &:read)
+
           assert_equal @user, Rubygem.last.ownerships.first.user
           assert_equal 1, Rubygem.last.ownerships.count
           assert_equal 2, Rubygem.last.versions.count
           assert_equal "Successfully registered gem: test (1.0.0)", @response.body
         end
         should "enqueue jobs" do
-          assert_difference "Delayed::Job.count", 8 do
-            post :create, body: gem_file("test-1.0.0.gem").read
+          assert_enqueued_jobs 1, only: ActionMailer::MailDeliveryJob do
+            assert_enqueued_jobs 6, only: FastlyPurgeJob do
+              assert_enqueued_jobs 1, only: NotifyWebHookJob do
+                assert_enqueued_jobs 1, only: Indexer do
+                  assert_enqueued_jobs 1, only: ReindexRubygemJob do
+                    post :create, body: gem_file("test-1.0.0.gem", &:read)
+                  end
+                end
+              end
+            end
           end
         end
       end
@@ -319,8 +335,8 @@ class Api::V1::RubygemsControllerTest < ActionController::TestCase
           rubygem = create(:rubygem, name: "test")
           create(:ownership, :unconfirmed, rubygem: rubygem, user: @user)
           create(:version, rubygem: rubygem, number: "0.0.0", updated_at: 1.year.ago, created_at: 1.year.ago)
-          assert_difference "Delayed::Job.count", 0 do
-            post :create, body: gem_file("test-1.0.0.gem").read
+          assert_no_enqueued_jobs do
+            post :create, body: gem_file("test-1.0.0.gem", &:read)
           end
         end
         should respond_with :forbidden
@@ -342,12 +358,13 @@ class Api::V1::RubygemsControllerTest < ActionController::TestCase
                           authors: ["Geddy Lee"],
                           built_at: @date)
 
-        post :create, body: gem_file.read
+        post :create, body: gem_file(&:read)
       end
       should respond_with :conflict
       should "not register new version" do
-        version = Rubygem.last.reload.versions.most_recent
-        assert_equal @date.to_formatted_s(:db), version.built_at.to_formatted_s(:db), "(date)"
+        version = Rubygem.last.reload.most_recent_version
+
+        assert_equal @date.to_fs(:db), version.built_at.to_fs(:db), "(date)"
         assert_equal "Freewill", version.summary, "(summary)"
         assert_equal "Geddy Lee", version.authors, "(authors)"
       end
@@ -357,7 +374,7 @@ class Api::V1::RubygemsControllerTest < ActionController::TestCase
       setup do
         post :create, body: "really bad gem"
       end
-      should respond_with :unprocessable_entity
+      should respond_with :unprocessable_content
       should "not register gem" do
         assert_predicate Rubygem.count, :zero?
         assert_match(/RubyGems\.org cannot process this gem/, @response.body)
@@ -367,8 +384,8 @@ class Api::V1::RubygemsControllerTest < ActionController::TestCase
     context "On POST to create with an underscore or dash variant of an existing gem" do
       setup do
         existing = create(:rubygem, name: "t_es-t", downloads: 3002)
-        existing.versions.create(number: "1.0.0", platform: "ruby")
-        post :create, body: gem_file("test-1.0.0.gem").read
+        create(:version, rubygem: existing, number: "1.0.0", platform: "ruby")
+        post :create, body: gem_file("test-1.0.0.gem", &:read)
       end
 
       should respond_with :forbidden
@@ -384,20 +401,22 @@ class Api::V1::RubygemsControllerTest < ActionController::TestCase
         @rubygem = create(:rubygem, name: "test", number: "0.0.0", owners: [@other_user])
         create(:global_web_hook, user: @user, url: "http://example.org")
 
-        post :create, body: gem_file("test-1.0.0.gem").read
+        assert_no_enqueued_jobs do
+          post :create, body: gem_file("test-1.0.0.gem", &:read)
+        end
       end
       should respond_with 403
       should "not allow new version to be saved" do
         assert_equal 1, @rubygem.ownerships.size
         assert_equal @other_user, @rubygem.ownerships.first.user
         assert_equal 1, @rubygem.versions.size
-        assert_equal 0, Delayed::Job.count
         assert_includes @response.body, "You do not have permission to push to this gem."
       end
     end
 
     context "On POST to create with reserved gem name" do
       setup do
+        create(:gem_name_reservation, name: "rubygems")
         post :create, body: gem_file("rubygems-0.1.0.gem").read
       end
       should respond_with 403
@@ -422,7 +441,8 @@ class Api::V1::RubygemsControllerTest < ActionController::TestCase
       should "POST to create for existing gem should not fail" do
         requires_toxiproxy
         Toxiproxy[:elasticsearch].down do
-          post :create, body: gem_file("test-1.0.0.gem").read
+          post :create, body: gem_file("test-1.0.0.gem", &:read)
+
           assert_response :success
           assert_equal @user, Rubygem.last.ownerships.first.user
           assert_equal 1, Rubygem.last.ownerships.count
@@ -435,22 +455,22 @@ class Api::V1::RubygemsControllerTest < ActionController::TestCase
 
   context "push to create with mfa required" do
     setup do
-      @user = create(:api_key, key: "12345", push_rubygem: true).user
+      @user = create(:api_key, key: "12345", scopes: %w[push_rubygem]).user
       @request.env["HTTP_AUTHORIZATION"] = "12345"
     end
 
     context "new gem without MFA enabled" do
       setup do
-        post :create, body: gem_file("mfa-required-1.0.0.gem").read
+        post :create, body: gem_file("mfa-required-1.0.0.gem", &:read)
       end
       should respond_with :forbidden
     end
 
     context "new gem with correct OTP" do
       setup do
-        @user.enable_mfa!(ROTP::Base32.random_base32, :ui_and_api)
-        @request.env["HTTP_OTP"] = ROTP::TOTP.new(@user.mfa_seed).now
-        post :create, body: gem_file("mfa-required-1.0.0.gem").read
+        @user.enable_totp!(ROTP::Base32.random_base32, :ui_and_api)
+        @request.env["HTTP_OTP"] = ROTP::TOTP.new(@user.totp_seed).now
+        post :create, body: gem_file("mfa-required-1.0.0.gem", &:read)
       end
       should respond_with :success
       should "register new gem" do
@@ -469,7 +489,7 @@ class Api::V1::RubygemsControllerTest < ActionController::TestCase
 
       context "by user without mfa" do
         setup do
-          post :create, body: gem_file("mfa-required-1.0.0.gem").read
+          post :create, body: gem_file("mfa-required-1.0.0.gem", &:read)
         end
 
         should respond_with :forbidden
@@ -477,9 +497,9 @@ class Api::V1::RubygemsControllerTest < ActionController::TestCase
 
       context "by user with mfa" do
         setup do
-          @user.enable_mfa!(ROTP::Base32.random_base32, :ui_and_api)
-          @request.env["HTTP_OTP"] = ROTP::TOTP.new(@user.mfa_seed).now
-          post :create, body: gem_file("mfa-required-1.0.0.gem").read
+          @user.enable_totp!(ROTP::Base32.random_base32, :ui_and_api)
+          @request.env["HTTP_OTP"] = ROTP::TOTP.new(@user.totp_seed).now
+          post :create, body: gem_file("mfa-required-1.0.0.gem", &:read)
         end
 
         should respond_with :success
@@ -499,7 +519,7 @@ class Api::V1::RubygemsControllerTest < ActionController::TestCase
 
       context "by user without mfa" do
         setup do
-          post :create, body: gem_file("test-1.0.0.gem").read
+          post :create, body: gem_file("test-1.0.0.gem", &:read)
         end
 
         should respond_with :forbidden
@@ -511,9 +531,9 @@ class Api::V1::RubygemsControllerTest < ActionController::TestCase
 
       context "by user with mfa" do
         setup do
-          @user.enable_mfa!(ROTP::Base32.random_base32, :ui_and_api)
-          @request.env["HTTP_OTP"] = ROTP::TOTP.new(@user.mfa_seed).now
-          post :create, body: gem_file("test-1.0.0.gem").read
+          @user.enable_totp!(ROTP::Base32.random_base32, :ui_and_api)
+          @request.env["HTTP_OTP"] = ROTP::TOTP.new(@user.totp_seed).now
+          post :create, body: gem_file("test-1.0.0.gem", &:read)
         end
 
         should respond_with :success
@@ -522,9 +542,191 @@ class Api::V1::RubygemsControllerTest < ActionController::TestCase
           assert_equal 2, Rubygem.last.versions.count
         end
         should "disable mfa requirement" do
-          refute_predicate @rubygem, :mfa_required?
+          refute_predicate @rubygem, :metadata_mfa_required?
         end
       end
+    end
+
+    context "when mfa is required" do
+      setup do
+        User.any_instance.stubs(:mfa_required?).returns true
+      end
+
+      context "by user with mfa disabled" do
+        setup do
+          post :create, body: gem_file("test-1.0.0.gem", &:read)
+        end
+
+        should respond_with :forbidden
+
+        should "show error message" do
+          mfa_error = I18n.t("multifactor_auths.api.mfa_required_not_yet_enabled").chomp
+
+          assert_includes @response.body, mfa_error
+        end
+      end
+
+      context "by user on `ui_only` level" do
+        setup do
+          @user.enable_totp!(ROTP::Base32.random_base32, :ui_only)
+          post :create, body: gem_file("test-1.0.0.gem", &:read)
+        end
+
+        should respond_with :forbidden
+
+        should "show error message" do
+          mfa_error = I18n.t("multifactor_auths.api.mfa_required_weak_level_enabled").chomp
+
+          assert_includes @response.body, mfa_error
+        end
+      end
+
+      context "by user on `ui_and_gem_signin` level" do
+        setup do
+          @user.enable_totp!(ROTP::Base32.random_base32, :ui_and_gem_signin)
+          post :create, body: gem_file("test-1.0.0.gem", &:read)
+        end
+
+        should respond_with :success
+
+        should "not show error message" do
+          refute_includes @response.body, I18n.t("multifactor_auths.api.mfa_required_not_yet_enabled").chomp
+          refute_includes @response.body, I18n.t("multifactor_auths.api.mfa_required_weak_level_enabled").chomp
+        end
+      end
+
+      context "by user on `ui_and_api` level" do
+        setup do
+          @user.enable_totp!(ROTP::Base32.random_base32, :ui_and_api)
+          @request.env["HTTP_OTP"] = ROTP::TOTP.new(@user.totp_seed).now
+          post :create, body: gem_file("test-1.0.0.gem", &:read)
+        end
+
+        should respond_with :success
+
+        should "not show error message" do
+          refute_includes @response.body, I18n.t("multifactor_auths.api.mfa_required_not_yet_enabled").chomp
+          refute_includes @response.body, I18n.t("multifactor_auths.api.mfa_required_weak_level_enabled").chomp
+        end
+      end
+    end
+
+    context "when mfa is recommended" do
+      setup do
+        User.any_instance.stubs(:mfa_recommended?).returns true
+      end
+
+      context "by user with mfa disabled" do
+        setup do
+          post :create, body: gem_file("test-1.0.0.gem", &:read)
+        end
+
+        should "include mfa setup warning" do
+          assert_includes @response.body, I18n.t("multifactor_auths.api.mfa_recommended_not_yet_enabled").chomp
+        end
+      end
+
+      context "by user on `ui_only` mfa level" do
+        setup do
+          @user.enable_totp!(ROTP::Base32.random_base32, :ui_only)
+          post :create, body: gem_file("test-1.0.0.gem", &:read)
+        end
+
+        should "include change mfa level warning" do
+          assert_includes @response.body, I18n.t("multifactor_auths.api.mfa_recommended_weak_level_enabled").chomp
+        end
+      end
+
+      context "by user on `ui_and_gem_signin` mfa level" do
+        setup do
+          @user.enable_totp!(ROTP::Base32.random_base32, :ui_and_gem_signin)
+          @request.env["HTTP_OTP"] = ROTP::TOTP.new(@user.totp_seed).now
+          post :create, body: gem_file("test-1.0.0.gem", &:read)
+        end
+
+        should respond_with :success
+        should "not include mfa warning" do
+          refute_includes @response.body, I18n.t("multifactor_auths.api.mfa_recommended_not_yet_enabled").chomp
+          refute_includes @response.body, I18n.t("multifactor_auths.api.mfa_recommended_weak_level_enabled").chomp
+        end
+      end
+
+      context "by user on `ui_and_api` mfa level" do
+        setup do
+          @user.enable_totp!(ROTP::Base32.random_base32, :ui_and_api)
+          @request.env["HTTP_OTP"] = ROTP::TOTP.new(@user.totp_seed).now
+          post :create, body: gem_file("test-1.0.0.gem", &:read)
+        end
+
+        should respond_with :success
+        should "not include mfa warning" do
+          refute_includes @response.body, I18n.t("multifactor_auths.api.mfa_recommended_not_yet_enabled").chomp
+          refute_includes @response.body, I18n.t("multifactor_auths.api.mfa_recommended_weak_level_enabled").chomp
+        end
+      end
+    end
+  end
+
+  context "push with api key with gem scoped" do
+    context "to a gem with ownership removed" do
+      setup do
+        ownership = create(:ownership, user: create(:user), rubygem: create(:rubygem, name: "test-gem123"))
+        @api_key = create(:api_key, key: "12343", owner: ownership.user, ownership: ownership, scopes: %i[push_rubygem])
+        ownership.destroy!
+        @request.env["HTTP_AUTHORIZATION"] = "12343"
+
+        post :create, body: gem_file("test-1.0.0.gem", &:read)
+      end
+
+      should respond_with :forbidden
+
+      should "#render_soft_deleted_api_key and display an error" do
+        assert_equal "An invalid API key cannot be used. Please delete it and create a new one.", @response.body
+      end
+    end
+
+    context "to a different gem" do
+      setup do
+        ownership = create(:ownership, user: create(:user), rubygem: create(:rubygem, name: "test-gem"))
+        create(:api_key, key: "12343", owner: ownership.user, ownership: ownership, scopes: %i[push_rubygem])
+        @request.env["HTTP_AUTHORIZATION"] = "12343"
+
+        post :create, body: gem_file("test-1.0.0.gem", &:read)
+      end
+
+      should respond_with :forbidden
+
+      should "say gem scope is invalid" do
+        assert_equal "This API key cannot perform the specified action on this gem.", @response.body
+      end
+    end
+
+    context "to the gem being pushed" do
+      setup do
+        ownership = create(:ownership, user: create(:user), rubygem: create(:rubygem, name: "test"))
+        create(:api_key, key: "12343", owner: ownership.user, ownership: ownership, scopes: %i[push_rubygem])
+        @request.env["HTTP_AUTHORIZATION"] = "12343"
+
+        post :create, body: gem_file("test-1.0.0.gem", &:read)
+      end
+
+      should respond_with :ok
+    end
+  end
+
+  context "create with a soft deleted api key" do
+    setup do
+      create(:ownership, user: create(:user), rubygem: create(:rubygem, name: "test"))
+      create(:api_key, key: "12343", scopes: %i[push_rubygem]).soft_delete!
+      @request.env["HTTP_AUTHORIZATION"] = "12343"
+
+      post :create, body: gem_file("test-1.0.0.gem", &:read)
+    end
+
+    should respond_with :forbidden
+
+    should "#render_soft_deleted_api_key and display an error" do
+      assert_equal "An invalid API key cannot be used. Please delete it and create a new one.", @response.body
     end
   end
 
@@ -534,7 +736,7 @@ class Api::V1::RubygemsControllerTest < ActionController::TestCase
         get :index, format: "json"
       end
       should "deny access" do
-        assert_response 401
+        assert_response :unauthorized
         assert_equal "Access Denied. Please sign up for an account at https://rubygems.org",
                      @response.body
       end
@@ -542,7 +744,7 @@ class Api::V1::RubygemsControllerTest < ActionController::TestCase
 
     context "on GET to index without index rubygem scope" do
       setup do
-        create(:api_key, key: "12345", index_rubygems: false, push_rubygem: true)
+        create(:api_key, key: "12345", scopes: %i[push_rubygem])
         @request.env["HTTP_AUTHORIZATION"] = "12345"
         get :index, format: :json
       end
@@ -555,9 +757,13 @@ class Api::V1::RubygemsControllerTest < ActionController::TestCase
         create(:api_key, key: "12343")
         @request.env["HTTP_AUTHORIZATION"] = "12343"
 
-        post :create, body: gem_file("test-1.0.0.gem").read
+        post :create, body: gem_file("test-1.0.0.gem", &:read)
       end
       should respond_with :forbidden
+
+      should "return body that includes the denied access message" do
+        assert_includes @response.body, "This API key cannot perform the specified action on this gem."
+      end
     end
   end
 
@@ -593,7 +799,9 @@ class Api::V1::RubygemsControllerTest < ActionController::TestCase
     end
 
     should "return names of reverse dependencies" do
-      get :reverse_dependencies, params: { id: @dependency.to_param }, format: "json"
+      get :reverse_dependencies, params: { id: @dependency.slug }, format: "json"
+
+      assert_response :success
       gems = JSON.load(@response.body)
 
       assert_equal 3, gems.size
@@ -606,9 +814,11 @@ class Api::V1::RubygemsControllerTest < ActionController::TestCase
     context "with only=development" do
       should "only return names of reverse development dependencies" do
         get :reverse_dependencies,
-            params: { id: @dependency.to_param,
+            params: { id: @dependency.slug,
                       only: "development",
                       format: "json" }
+
+        assert_response :success
 
         gems = JSON.load(@response.body)
 
@@ -621,9 +831,11 @@ class Api::V1::RubygemsControllerTest < ActionController::TestCase
     context "with only=runtime" do
       should "only return names of reverse development dependencies" do
         get :reverse_dependencies,
-            params: { id: @dependency.to_param,
+            params: { id: @dependency.slug,
                       only: "runtime",
                       format: "json" }
+
+        assert_response :success
 
         gems = JSON.load(@response.body)
 

@@ -11,7 +11,7 @@ class RubygemsControllerTest < ActionController::TestCase
       setup do
         @owners = [@user, create(:user)]
         @rubygem = create(:rubygem, owners: @owners, number: "1.0.0")
-        get :show, params: { id: @rubygem.to_param }
+        get :show, params: { id: @rubygem.slug }
       end
 
       should respond_with :success
@@ -27,10 +27,11 @@ class RubygemsControllerTest < ActionController::TestCase
         @owners = [@user, create(:user)]
         @rubygem = create(:rubygem, owners: @owners, number: "1.0.0")
         @rubygem.linkset = nil
-        get :show, params: { id: @rubygem.to_param }
+        get :show, params: { id: @rubygem.slug }
       end
 
       should respond_with :success
+
       should "render documentation link" do
         assert page.has_selector?("a#docs")
       end
@@ -41,7 +42,7 @@ class RubygemsControllerTest < ActionController::TestCase
         @rubygem = create(:rubygem)
         create(:version, rubygem: @rubygem)
         create(:subscription, rubygem: @rubygem, user: @user)
-        get :show, params: { id: @rubygem.to_param }
+        get :show, params: { id: @rubygem.slug }
       end
 
       should respond_with :success
@@ -55,13 +56,39 @@ class RubygemsControllerTest < ActionController::TestCase
       setup do
         @rubygem = create(:rubygem)
         create(:version, rubygem: @rubygem)
-        get :show, params: { id: @rubygem.to_param }
+        get :show, params: { id: @rubygem.slug }
       end
 
       should respond_with :success
       should "have subscribe link" do
         assert page.has_link? "Subscribe"
         refute page.has_content? "Unsubscribe"
+      end
+    end
+
+    context "On GET to security_events for a gem that the user is not an owner of" do
+      setup { get :security_events, params: { id: create(:rubygem).slug } }
+
+      should respond_with :forbidden
+    end
+
+    context "On GET to security_events for a gem that the user is an owner of" do
+      setup do
+        @rubygem = create(:rubygem)
+        @other_user = create(:user)
+        Current.set(user: @user) do
+          @rubygem.ownerships.create!(user: @other_user, authorizer: @user).destroy!
+        end
+        @rubygem.ownerships.create!(user: @user, authorizer: @user).confirm!
+        get :security_events, params: { id: @rubygem.slug }
+      end
+
+      should respond_with :success
+
+      should "include the security events" do
+        assert_text "Owner Added"
+        assert_text "Owner Confirmed"
+        assert_text "Owner Removed"
       end
     end
   end
@@ -81,7 +108,7 @@ class RubygemsControllerTest < ActionController::TestCase
     should "render links" do
       @gems.each do |g|
         assert page.has_content?(g.name)
-        assert page.has_selector?("a[href='#{rubygem_path(g)}']")
+        page.assert_selector("a[href='#{rubygem_path(g.slug)}']")
       end
     end
   end
@@ -99,8 +126,8 @@ class RubygemsControllerTest < ActionController::TestCase
     should "render posts with platform-specific titles and links of all subscribed versions" do
       @versions.each do |v|
         assert_select "entry > title", count: 1, text: v.to_title
-        assert_select "entry > link[href='#{rubygem_version_url(v.rubygem, v.slug)}']", count: 1
-        assert_select "entry > id", count: 1, text: rubygem_version_url(v.rubygem, v.slug)
+        assert_select "entry > link[href='#{rubygem_version_url(v.rubygem.slug, v.slug)}']", count: 1
+        assert_select "entry > id", count: 1, text: rubygem_version_url(v.rubygem.slug, v.slug)
       end
     end
 
@@ -128,7 +155,7 @@ class RubygemsControllerTest < ActionController::TestCase
     should respond_with :success
     should "render links" do
       assert page.has_content?(@zgem.name)
-      assert page.has_selector?("a[href='#{rubygem_path(@zgem)}']")
+      assert page.has_selector?("a[href='#{rubygem_path(@zgem.slug)}']")
     end
   end
 
@@ -147,7 +174,7 @@ class RubygemsControllerTest < ActionController::TestCase
     should "render links" do
       @gems.each do |g|
         assert page.has_content?(g.name)
-        assert page.has_selector?("a[href='#{rubygem_path(g)}']")
+        assert page.has_selector?("a[href='#{rubygem_path(g.slug)}']")
       end
     end
   end
@@ -156,14 +183,15 @@ class RubygemsControllerTest < ActionController::TestCase
     setup do
       @latest_version = create(:version, created_at: 1.minute.ago)
       @rubygem = @latest_version.rubygem
-      get :show, params: { id: @rubygem.to_param }
+      get :show, params: { id: @rubygem.slug }
     end
 
     should respond_with :success
     should "render info about the gem" do
       assert page.has_content?(@rubygem.name)
       assert page.has_content?(@latest_version.number)
-      css = "small:contains('#{@latest_version.created_at.to_date.to_formatted_s(:long)}')"
+      css = "small:contains('#{@latest_version.authored_at.to_date.to_fs(:long)}')"
+
       assert page.has_css?(css)
       assert page.has_content?("Links")
     end
@@ -176,17 +204,20 @@ class RubygemsControllerTest < ActionController::TestCase
     end
     should "render plural licenses header for other than one license" do
       @latest_version.update(licenses: nil)
-      get :show, params: { id: @rubygem.to_param }
+      get :show, params: { id: @rubygem.slug }
+
       assert page.has_content?("Licenses")
 
       @latest_version.update(licenses: %w[MIT GPL-2])
-      get :show, params: { id: @rubygem.to_param }
+      get :show, params: { id: @rubygem.slug }
+
       assert page.has_content?("Licenses")
     end
 
     should "render singular license header for one line license" do
       @latest_version.update(licenses: ["MIT"])
-      get :show, params: { id: @rubygem.to_param }
+      get :show, params: { id: @rubygem.slug }
+
       assert page.has_content?("License")
       assert page.has_no_content?("Licenses")
     end
@@ -200,19 +231,21 @@ class RubygemsControllerTest < ActionController::TestCase
         create(:version, number: "1.9.9", rubygem: @rubygem, created_at: 1.minute.ago),
         create(:version, number: "1.9.9.rc4", rubygem: @rubygem, created_at: 2.days.ago)
       ]
-      get :show, params: { id: @rubygem.to_param }
+      get :show, params: { id: @rubygem.slug }
     end
 
     should respond_with :success
     should "render info about the gem" do
       assert page.has_content?(@rubygem.name)
       assert page.has_content?(@versions[0].number)
-      css = "small:contains('#{@versions[0].built_at.to_date.to_formatted_s(:long)}')"
+      css = "small:contains('#{@versions[0].built_at.to_date.to_fs(:long)}')"
+
       assert page.has_css?(css)
 
       assert page.has_content?("Versions")
       assert page.has_content?(@versions[2].number)
-      css = "small:contains('#{@versions[2].built_at.to_date.to_formatted_s(:long)}')"
+      css = "small:contains('#{@versions[2].built_at.to_date.to_fs(:long)}')"
+
       assert page.has_css?(css)
     end
 
@@ -231,7 +264,7 @@ class RubygemsControllerTest < ActionController::TestCase
       @rubygem = version.rubygem
     end
     context "when signed out" do
-      setup { get :show, params: { id: @rubygem.to_param } }
+      setup { get :show, params: { id: @rubygem.slug } }
       should respond_with :success
       should "render info about the gem" do
         assert page.has_content?("This gem is not currently hosted on RubyGems.org")
@@ -243,8 +276,9 @@ class RubygemsControllerTest < ActionController::TestCase
         @user = create(:user)
         sign_in_as @user
         create(:subscription, user: @user, rubygem: @rubygem)
-        get :show, params: { id: @rubygem.to_param }
+        get :show, params: { id: @rubygem.slug }
       end
+
       should "have unsubscribe link" do
         assert page.has_link? "Unsubscribe"
       end
@@ -254,7 +288,7 @@ class RubygemsControllerTest < ActionController::TestCase
         @rubygem.update(created_at: 30.days.ago, updated_at: 99.days.ago)
         @owner = create(:user)
         create(:ownership, user: @owner, rubygem: @rubygem)
-        get :show, params: { id: @rubygem.to_param }
+        get :show, params: { id: @rubygem.slug }
       end
 
       should respond_with :success
@@ -271,9 +305,10 @@ class RubygemsControllerTest < ActionController::TestCase
   context "On GET to show for a gem with no versions" do
     setup do
       @rubygem = create(:rubygem)
-      get :show, params: { id: @rubygem.to_param }
+      get :show, params: { id: @rubygem.slug }
     end
     should respond_with :success
+
     should "render info about the gem" do
       assert page.has_content?("This gem is not currently hosted on RubyGems.org.")
     end
@@ -286,7 +321,7 @@ class RubygemsControllerTest < ActionController::TestCase
       @development = create(:dependency, :development, version: @version)
       @runtime     = create(:dependency, :runtime,     version: @version)
 
-      get :show, params: { id: @version.rubygem.to_param }
+      get :show, params: { id: @version.rubygem.slug }
     end
 
     should respond_with :success
@@ -298,6 +333,10 @@ class RubygemsControllerTest < ActionController::TestCase
       assert page.has_content?(@version.dependencies.runtime.count)
       assert page.has_content?(@version.dependencies.development.count)
     end
+    should "show proper links to dependencies" do
+      assert page.has_link?(@runtime.rubygem.name, href: "/gems/#{@runtime.rubygem.name}")
+      assert page.has_link?(@development.rubygem.name, href: "/gems/#{@development.rubygem.name}")
+    end
   end
 
   context "On GET to show for a gem with dependencies that are unresolved" do
@@ -306,10 +345,11 @@ class RubygemsControllerTest < ActionController::TestCase
 
       @unresolved = create(:dependency, :unresolved, version: @version)
 
-      get :show, params: { id: @version.rubygem.to_param }
+      get :show, params: { id: @version.rubygem.slug }
     end
 
     should respond_with :success
+
     should "show unresolved dependencies" do
       assert page.has_content?(@unresolved.name)
     end
@@ -328,13 +368,13 @@ class RubygemsControllerTest < ActionController::TestCase
       @missing_dependency.rubygem.update_column(:name, "missing")
       @missing_dependency.update_column(:rubygem_id, nil)
 
-      get :show, params: { id: @version.rubygem.to_param }
+      get :show, params: { id: @version.rubygem.slug }
     end
 
     should respond_with :success
-    should "show only dependencies that have rubygem" do
+    should "show dependencies that have rubygem with version" do
       assert page.has_content?(@runtime.rubygem.name)
-      assert page.has_no_content?("1.2.0")
+      assert page.has_content?("1.2.0")
     end
   end
 
@@ -343,10 +383,11 @@ class RubygemsControllerTest < ActionController::TestCase
       @version = create(:version)
       @runtime = create(:dependency, :runtime, version: @version)
       @runtime.rubygem.update_column(:name, "foo>0.1.1")
-      get :show, params: { id: @version.rubygem.to_param }
+      get :show, params: { id: @version.rubygem.slug }
     end
 
     should respond_with :success
+
     should "show runtime dependencies and development dependencies" do
       assert page.has_content?(@runtime.rubygem.name)
     end
@@ -362,10 +403,12 @@ class RubygemsControllerTest < ActionController::TestCase
 
   context "On GET to show for a reserved gem" do
     setup do
-      get :show, params: { id: Patterns::GEM_NAME_RESERVED_LIST.sample }
+      reservation = create(:gem_name_reservation)
+      get :show, params: { id: reservation.name }
     end
 
     should respond_with :success
+
     should "render reserved page" do
       assert page.has_content? "This namespace is reserved by rubygems.org."
     end
@@ -376,16 +419,27 @@ class RubygemsControllerTest < ActionController::TestCase
       setup do
         @rubygem = create(:rubygem)
         create(:version, rubygem: @rubygem)
-        get :show, params: { id: @rubygem.to_param }
+        get :show, params: { id: @rubygem.slug }
       end
 
       should respond_with :success
+
       should "have an subscribe link that goes to the sign in page" do
         assert page.has_selector?("a[href='#{sign_in_path}']")
       end
       should "not have an unsubscribe link" do
         refute page.has_selector?("a#unsubscribe")
       end
+    end
+
+    context "On GET to security_events for a gem" do
+      setup do
+        @rubygem = create(:rubygem)
+        create(:version, rubygem: @rubygem)
+        get :security_events, params: { id: @rubygem.slug }
+      end
+
+      should respond_with :redirect
     end
   end
 end

@@ -20,7 +20,8 @@ class Api::V1::ApiKeysController < Api::BaseController
 
       check_mfa(user) do
         key = generate_unique_rubygems_key
-        api_key = user.api_keys.build(api_key_create_params.merge(hashed_key: hashed_key(key)))
+        build_params = { owner: user, hashed_key: hashed_key(key), **api_key_create_params }
+        api_key = ApiKey.new(build_params)
 
         save_and_respond(api_key, key)
       end
@@ -32,9 +33,9 @@ class Api::V1::ApiKeysController < Api::BaseController
       user = User.authenticate(username, password)
 
       check_mfa(user) do
-        api_key = user.api_keys.find_by!(hashed_key: hashed_key(params[:api_key]))
+        api_key = user.api_keys.find_by!(hashed_key: hashed_key(key_param))
 
-        if api_key.update(api_key_update_params)
+        if api_key.update(api_key_update_params(api_key))
           respond_with "Scopes for the API key #{api_key.name} updated"
         else
           errors = api_key.errors.full_messages
@@ -48,7 +49,13 @@ class Api::V1::ApiKeysController < Api::BaseController
 
   def check_mfa(user)
     if user&.mfa_gem_signin_authorized?(otp)
-      yield
+      if user.mfa_required_not_yet_enabled?
+        render_forbidden t("multifactor_auths.api.mfa_required_not_yet_enabled").chomp
+      elsif user.mfa_required_weak_level_enabled?
+        render_forbidden t("multifactor_auths.api.mfa_required_weak_level_enabled").chomp
+      else
+        yield
+      end
     elsif user&.mfa_enabled?
       prompt_text = otp.present? ? t(:otp_incorrect) : t(:otp_missing)
       render plain: prompt_text, status: :unauthorized
@@ -58,8 +65,8 @@ class Api::V1::ApiKeysController < Api::BaseController
   end
 
   def save_and_respond(api_key, key)
-    if api_key.save
-      Mailer.delay.api_key_created(api_key.id)
+    if api_key.errors.blank? && api_key.save
+      Mailer.api_key_created(api_key.id).deliver_later
       respond_with key
     else
       respond_with api_key.errors.full_messages.to_sentence, status: :unprocessable_entity
@@ -78,11 +85,15 @@ class Api::V1::ApiKeysController < Api::BaseController
     request.headers["HTTP_OTP"]
   end
 
-  def api_key_create_params
-    params.permit(:name, *ApiKey::API_SCOPES, :mfa)
+  def key_param
+    params.expect(:api_key)
   end
 
-  def api_key_update_params
-    params.permit(*ApiKey::API_SCOPES, :mfa)
+  def api_key_create_params
+    ApiKeysHelper.api_key_params(params.permit(:name, *ApiKey::API_SCOPES, :mfa, :rubygem_name, :expires_at, scopes: [ApiKey::API_SCOPES]))
+  end
+
+  def api_key_update_params(key)
+    ApiKeysHelper.api_key_params(params.permit(*ApiKey::API_SCOPES, :mfa, scopes: [ApiKey::API_SCOPES]), key)
   end
 end

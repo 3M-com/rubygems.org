@@ -41,8 +41,8 @@ class VersionsControllerTest < ActionController::TestCase
     should "render information about versions" do
       @versions.each do |v|
         assert_select "entry > title", count: 1, text: v.to_title
-        assert_select "entry > link[href='#{rubygem_version_url(v.rubygem, v.slug)}']", count: 1
-        assert_select "entry > id", count: 1, text: rubygem_version_url(v.rubygem, v.slug)
+        assert_select "entry > link[href='#{rubygem_version_url(v.rubygem.slug, v.slug)}']", count: 1
+        assert_select "entry > id", count: 1, text: rubygem_version_url(v.rubygem.slug, v.slug)
         # assert_select "entry > updated", :count => @versions.count, :text => v.created_at.iso8601
       end
     end
@@ -55,11 +55,86 @@ class VersionsControllerTest < ActionController::TestCase
     end
 
     should respond_with :success
+
     should "show not hosted notice" do
       assert page.has_content?("This gem is not currently hosted")
     end
     should "not show checksum" do
       assert page.has_no_content?("Sha 256 checksum")
+    end
+  end
+
+  context "on GET to index - pluralization" do
+    context "with one version" do
+      setup do
+        rubygem = create(:rubygem)
+        create(:version, number: "1.1.2", rubygem: rubygem)
+        get :index, params: { rubygem_id: rubygem.name }
+      end
+
+      should "use the singular version" do
+        assert_select ".t-list__heading", text: /1 version\b/, count: 1
+      end
+    end
+
+    context "with two versions" do
+      setup do
+        rubygem = create(:rubygem)
+        create(:version, number: "1.1.2", rubygem: rubygem)
+        create(:version, number: "1.1.3", rubygem: rubygem)
+        get :index, params: { rubygem_id: rubygem.name }
+      end
+
+      should "use the plural version" do
+        assert_select ".t-list__heading", text: /2 versions\b/, count: 1
+      end
+    end
+  end
+
+  context "on GET to index with imported versions" do
+    setup do
+      @built_at = Date.parse("2000-01-01")
+      rubygem = create(:rubygem)
+      create(:version, number: "1.1.2", rubygem: rubygem, created_at: Version::RUBYGEMS_IMPORT_DATE, built_at: @built_at)
+      get :index, params: { rubygem_id: rubygem.name }
+    end
+
+    should respond_with :success
+
+    should "show imported version number with an superscript asterisk and a tooltip" do
+      tooltip_text = <<~NOTICE.squish
+        This gem version was imported to RubyGems.org on July 25, 2009.
+        The date displayed was specified by the author in the gemspec.
+      NOTICE
+
+      assert_select ".gem__version__date", text: "January 01, 2000*", count: 1 do |elements|
+        version = elements.first
+
+        assert_equal(tooltip_text, version["data-tooltip"])
+      end
+
+      assert_select ".gem__version__date sup", text: "*", count: 1
+    end
+  end
+
+  context "on GET to index" do
+    setup do
+      @rubygem = create(:rubygem)
+      create(:version, number: "1.1.2", rubygem: @rubygem)
+    end
+
+    should "get paginated result" do
+      # first page includes the only version
+      get :index, params: { rubygem_id: @rubygem.name }
+
+      assert_response :success
+      assert page.has_content?("1.1.2")
+
+      # second page does not include the only version
+      get :index, params: { rubygem_id: @rubygem.name, page: 2 }
+
+      assert_response :success
+      refute page.has_content?("1.1.2")
     end
   end
 
@@ -74,6 +149,7 @@ class VersionsControllerTest < ActionController::TestCase
     end
 
     should respond_with :success
+
     should "render info about the gem" do
       assert page.has_content?(@rubygem.name)
     end
@@ -85,8 +161,9 @@ class VersionsControllerTest < ActionController::TestCase
         assert page.has_content?(version.number)
       end
     end
+
     should "render the checksum version" do
-      assert page.has_content?(@latest_version.sha256_hex)
+      assert page.has_field?("gem_sha_256_checksum", with: @latest_version.sha256_hex)
     end
   end
 
@@ -99,13 +176,15 @@ class VersionsControllerTest < ActionController::TestCase
     end
 
     should respond_with :success
+
     should "show yanked notice" do
       assert page.has_content?("This version has been yanked")
     end
     should "render other versions" do
       assert page.has_content?("Versions")
       assert page.has_content?(@version.number)
-      css = "small:contains('#{@version.created_at.to_date.to_formatted_s(:long)}')"
+      css = "small:contains('#{@version.authored_at.to_date.to_fs(:long)}')"
+
       assert page.has_css?(css)
     end
     should "renders owner gems overview link" do

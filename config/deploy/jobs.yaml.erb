@@ -16,14 +16,17 @@ spec:
   template:
     metadata:
       annotations:
-        ad.datadoghq.com/unicorn.logs: '[{"source":"rails","service":"rubygems.org"}]'
+        ad.datadoghq.com/good-job.logs: '[{"source":"rails","service":"rubygems.org","version": <%= current_sha.dump %>}]'
       labels:
         name: jobs
+        tags.datadoghq.com/env: "<%= environment %>"
+        tags.datadoghq.com/service: rubygems.org
+        tags.datadoghq.com/version: <%= current_sha %>
     spec:
       containers:
-      - name: jobs
-        image: quay.io/rubygems/rubygems.org:<%= current_sha %>
-        args: ["rake", "jobs:work"]
+      - name: good-job
+        image: 048268392960.dkr.ecr.us-west-2.amazonaws.com/rubygems/rubygems.org:<%= current_sha %>
+        args: ["good_job", "start"]
         resources:
           <% if environment == 'production' %>
           requests:
@@ -31,7 +34,7 @@ spec:
             memory: 1.4Gi
           limits:
             cpu: 1000m
-            memory: 1.6Gi
+            memory: 2.0Gi
           <% else %>
           requests:
             cpu: 200m
@@ -40,11 +43,37 @@ spec:
             cpu: 500m
             memory: 1.2Gi
           <% end %>
+        ports:
+          - name: probe-port
+            containerPort: 7001
+        startupProbe:
+          httpGet:
+            path: "/status/started"
+            port: probe-port
+          failureThreshold: 30
+          periodSeconds: 10
+        livenessProbe:
+          httpGet:
+            path: "/status/connected"
+            port: probe-port
+          failureThreshold: 1
+          periodSeconds: 10
         env:
           - name: RAILS_ENV
             value: "<%= environment %>"
           - name: ENV
             value: "<%= environment %>"
+          - name: GOOD_JOB_PROBE_PORT
+            value: "7001"
+          <% if environment != "production" %>
+          - name: GOOD_JOB_MAX_THREADS
+            value: "2"
+          <% end %>
+          - name: DD_AGENT_HOST
+            valueFrom:
+              fieldRef:
+                apiVersion: v1
+                fieldPath: status.hostIP
           - name: STATSD_IMPLEMENTATION
             value: "datadog"
           - name: STATSD_HOST
@@ -83,11 +112,6 @@ spec:
               secretKeyRef:
                 name: <%= environment %>
                 key: aws_secret_access_key
-          - name: NEW_RELIC_LICENSE_KEY
-            valueFrom:
-              secretKeyRef:
-                name: <%= environment %>
-                key: new_relic_license_key
           - name: HONEYBADGER_API_KEY
             valueFrom:
               secretKeyRef:
@@ -113,6 +137,8 @@ spec:
               secretKeyRef:
                 name: <%= environment %>
                 key: elasticsearch_url
+          - name: SEARCH_NUM_REPLICAS
+            value: "1"
           - name: MEMCACHED_ENDPOINT
             valueFrom:
               secretKeyRef:
@@ -133,5 +159,20 @@ spec:
               secretKeyRef:
                 name: <%= environment %>
                 key: database_url
+          - name: HOOK_RELAY_ACCOUNT_ID
+            valueFrom:
+              secretKeyRef:
+                name: <%= environment %>
+                key: hook_relay_account_id
+          - name: HOOK_RELAY_HOOK_ID
+            valueFrom:
+              secretKeyRef:
+                name: <%= environment %>
+                key: hook_relay_hook_id
+          - name: LAUNCH_DARKLY_SDK_KEY
+            valueFrom:
+              secretKeyRef:
+                name: <%= environment %>
+                key: launch_darkly_sdk_key
         securityContext:
           privileged: false

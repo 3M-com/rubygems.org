@@ -8,7 +8,7 @@ class DependenciesControllerTest < ActionController::TestCase
     @dep_rubygem = create(:rubygem)
 
     ["1.0.2", "2.4.3", "4.5.6"].map do |ver_number|
-      create(:version, number: ver_number, rubygem: @dep_rubygem)
+      create(:version, number: ver_number, rubygem: @dep_rubygem, indexed: true)
     end
 
     create(:dependency,
@@ -24,7 +24,11 @@ class DependenciesControllerTest < ActionController::TestCase
 
   def render_str_call(scope, dependencies)
     local_var = { scope: scope, dependencies: dependencies, gem_name: @rubygem.name }
-    ActionController::Base.new.render_to_string(partial: "dependencies/dependencies", formats: [:html], locals: local_var)
+    DependenciesController.renderer.new(
+      {
+        "HTTP_HOST" => "test.host"
+      }
+    ).render(partial: "dependencies/dependencies", formats: [:html], locals: local_var)
   end
 
   context "GET to show in html" do
@@ -33,6 +37,7 @@ class DependenciesControllerTest < ActionController::TestCase
     end
 
     should respond_with :success
+
     should "render gem name" do
       assert page.has_content?(@rubygem.name)
     end
@@ -51,12 +56,23 @@ class DependenciesControllerTest < ActionController::TestCase
         request_endpoint(@rubygem.name, @version.number)
       end
       should respond_with :success
+
       should "render gem name" do
         assert page.has_content?(@rubygem.name)
       end
       should "render dependencies of gem" do
         refute page.has_content?(@dependency.name)
       end
+    end
+
+    context "with an invalid version that makes a valid gem full name" do
+      setup do
+        prefix = create(:version, rubygem: build(:rubygem, name: "foo"), number: "0.1.0", platform: "ruby")
+        create(:version, rubygem: build(:rubygem, name: "foo-bar"), number: "0.1.0", platform: "ruby")
+        request_endpoint(prefix.rubygem.name, "bar-0.1.0")
+      end
+
+      should respond_with :not_found
     end
   end
 
@@ -83,6 +99,7 @@ class DependenciesControllerTest < ActionController::TestCase
       }
       run = render_str_call("runtime", dependencies)
       dev = render_str_call("development", dependencies)
+
       assert_equal run, @response["run_html"]
       assert_equal dev, @response["dev_html"]
     end

@@ -1,6 +1,10 @@
 module ApplicationHelper
+  include BetterHtml::Helpers
+
   def page_title
     combo = "#{t :title} | #{t :subtitle}"
+    # If instance variable @title_for_header_only is present then it is added to combo title string
+    combo = "#{@title_for_header_only} | #{combo}" if @title_for_header_only.present?
     @title.present? ? "#{@title} | #{combo}" : combo
   end
 
@@ -11,6 +15,13 @@ module ApplicationHelper
                 title: title)
   end
 
+  # Copied from importmap-rails but with the nonce removed. We rely on the sha256 hash instead.
+  # Relying on the hash improves the caching behavior by not sending the cached nonce to the client.
+  def javascript_inline_importmap_tag(importmap_json = Rails.application.importmap.to_json(resolver: self))
+    tag.script importmap_json.html_safe,
+      type: "importmap", "data-turbo-track": "reload"
+  end
+
   def short_info(rubygem)
     info = gem_info(rubygem).strip.truncate(90)
     escape_once(sanitize(info))
@@ -18,18 +29,22 @@ module ApplicationHelper
 
   def gem_info(rubygem)
     if rubygem.respond_to?(:description)
-      [rubygem.description, rubygem.summary, "This rubygem does not have a description or summary."].find(&:present?)
+      [rubygem.summary, rubygem.description, "This rubygem does not have a description or summary."].find(&:present?)
     else
       version = rubygem.latest_version || rubygem.versions.last
       version.info
     end
   end
 
-  def gravatar(size, id = "gravatar", user = current_user)
-    image_tag user.gravatar_url(size: size, secure: request.ssl?).html_safe,
+  def avatar(size, id = "gravatar", user = current_user, theme: :light, **)
+    raise ArgumentError, "invalid default avatar theme, only light and dark are suported" unless %i[light dark].include? theme
+
+    url = avatar_user_path(user.id, params: { size: size, theme: theme })
+    image_tag(url,
       id: id,
       width: size,
-      height: size
+      height: size,
+      **)
   end
 
   def download_count(rubygem)
@@ -38,14 +53,6 @@ module ApplicationHelper
 
   def stats_graph_meter(gem, count)
     gem.downloads * 1.0 / count * 100
-  end
-
-  def search_form_class
-    if [root_path, advanced_search_path].include? request.path_info
-      "header__search-wrap--home"
-    else
-      "header__search-wrap"
-    end
   end
 
   def active?(path)
@@ -61,5 +68,42 @@ module ApplicationHelper
   def content_for_title(title, title_url)
     return title unless title_url
     link_to title, title_url, class: "t-link--black"
+  end
+
+  def flash_message(name, msg)
+    return sanitize(msg) if name.end_with? "html"
+    msg
+  end
+
+  def rubygem_search_field(**kwargs)
+    data = {
+      autocomplete_target: "query",
+      action: %w[
+        autocomplete#suggest
+        keydown.down->autocomplete#next
+        keydown.up->autocomplete#prev
+        keydown.esc->autocomplete#hide
+        keydown.enter->autocomplete#clear
+        click@window->autocomplete#hide
+        focus->autocomplete#suggest
+        blur->autocomplete#hide
+      ].join(" ")
+    }
+    aria = { autocomplete: "list" }
+
+    data.merge!(kwargs.delete(:data) || {})
+    aria.merge!(kwargs.delete(:aria) || {})
+
+    search_field_tag(
+      :query,
+      params[:query],
+      placeholder: t("layouts.application.header.search_gem_html"),
+      autofocus: current_page?(root_url),
+      class: kwargs[:class],
+      autocomplete: "off",
+      aria:,
+      data:,
+      **kwargs
+    )
   end
 end

@@ -2,57 +2,91 @@
 
 set -ex
 
-if [ -z "$RUBYGEMS_VERSION" ] || [ $RUBYGEMS_VERSION == 'latest' ]
-then
+if [ -z "$RUBYGEMS_VERSION" ] || [ "$RUBYGEMS_VERSION" == 'latest' ]; then
   exit 0
 fi
 
-if [ -z "$RUBY_VERSION" ] || [ $RUBY_VERSION == 'ruby-head' ]
-then
+if [ -z "$RUBY_VERSION" ] || [ "$RUBY_VERSION" == 'ruby-head' ]; then
   exit 0
 fi
-
-echo "$GITHUB_SHA" > REVISION
 
 # make repository lower-case, since it is used in docker image tag
 # and must be lowercase
-GITHUB_REPOSITORY=$(echo "$GITHUB_REPOSITORY" | tr '[:upper:]' '[:lower:]')
+GITHUB_REPOSITORY=$(echo "${GITHUB_REPOSITORY:-rubygems/rubygems.org}" | tr '[:upper:]' '[:lower:]')
+
+DOCKER_TAG="048268392960.dkr.ecr.us-west-2.amazonaws.com/$GITHUB_REPOSITORY:$GITHUB_SHA"
 
 docker buildx build --cache-from=type=local,src=/tmp/.buildx-cache \
   --cache-to=mode=max,type=local,dest=/tmp/.buildx-cache-new \
   --output type=docker \
-  -t quay.io/$GITHUB_REPOSITORY:$GITHUB_SHA \
-  --build-arg RUBYGEMS_VERSION=$RUBYGEMS_VERSION .
+  --tag "$DOCKER_TAG" \
+  --build-arg RUBYGEMS_VERSION="$RUBYGEMS_VERSION" \
+  --build-arg REVISION="$GITHUB_SHA" \
+  --build-arg BUNDLE_WITH="$([ -n "${BUNDLE_PACKAGER__DEV}" ] && echo "avo")" \
+  --secret id=BUNDLE_PACKAGER__DEV \
+  .
 
-docker run -e RAILS_ENV=production -e SECRET_KEY_BASE=1234 -e DATABASE_URL=postgresql://localhost \
-  --net host quay.io/$GITHUB_REPOSITORY:$GITHUB_SHA \
-  -- rake db:create db:migrate
-docker run -d -e RAILS_ENV=production -e SECRET_KEY_BASE=1234 -e DATABASE_URL=postgresql://localhost \
-  --net host quay.io/$GITHUB_REPOSITORY:$GITHUB_SHA \
-  -- unicorn_rails -E production -c /app/config/unicorn.conf
+# This is a ruby script we run to ensure that all dependencies are configured properly in
+# the docker container, even if they are not used in the the few requests made to the application.
+docker run -e RAILS_ENV=production -e SECRET_KEY_BASE_DUMMY=1 -e DATABASE_URL=postgresql://localhost \
+  --net host "$DOCKER_TAG" \
+  -- bin/rails runner - <<-EOS
+Magic.buffer('')
+EOS
+
+docker run -e RAILS_ENV=production -e SECRET_KEY_BASE_DUMMY=1 -e DATABASE_URL=postgresql://localhost \
+  --net host "$DOCKER_TAG" \
+  -- bin/rails db:create db:migrate
+docker run -d -e RAILS_ENV=production -e SECRET_KEY_BASE_DUMMY=1 -e DATABASE_URL=postgresql://localhost \
+  --net host "$DOCKER_TAG" \
+  -- puma --environment production --config /app/config/puma.rb
 
 sleep 5
-curl -m 5 http://localhost:3000/internal/ping | grep PONG
+pong=$(curl -m 5 http://localhost:3000/internal/ping || true)
 
-if [ $? -eq 1 ]; then
+if [ "${pong}" != "PONG" ]; then
   echo "Internal ping api test didn't pass."
-  docker ps -aqf "ancestor=quay.io/$GITHUB_REPOSITORY:$GITHUB_SHA" | xargs -Iid docker logs id
+  docker ps -aqf "ancestor=$DOCKER_TAG" | xargs -Iid docker logs id
   exit 1
 fi
 
-rubygems_version_installed=$(docker run quay.io/$GITHUB_REPOSITORY:$GITHUB_SHA -- gem -v)
+revision=$(curl -m 5 http://localhost:3000/internal/revision || true)
+if [ "${revision}" != "${GITHUB_SHA}" ]; then
+  echo "Internal revision test didn't pass."
+  docker ps -aqf "ancestor=$DOCKER_TAG" | xargs -Iid docker logs id
+  exit 1
+fi
 
-if [ $rubygems_version_installed != $RUBYGEMS_VERSION ]; then
+rubygems_version_installed=$(docker run "$DOCKER_TAG" -- gem -v)
+
+if [ "$rubygems_version_installed" != "$RUBYGEMS_VERSION" ]; then
   echo "Installed gem version doesn't match"
   echo "expected: $RUBYGEMS_VERSION, found: $rubygems_version_installed"
   exit 1
 fi
 
-if [ -z "$DOCKER_USERNAME" ] || [ -z "$DOCKER_PASSWORD" ]
-then
+pusher_arn="arn:aws:iam::048268392960:role/rubygems-ecr-pusher"
+caller_arn="$(aws sts get-caller-identity --output text --query Arn || true)"
+
+set +x
+[[ "$caller_arn" == "$pusher_arn" ]] ||
+  [[ "$caller_arn" == "arn:aws:sts::048268392960:assumed-role/rubygems-ecr-pusher/GitHubActions" ]] ||
+  export $(printf "AWS_ACCESS_KEY_ID=%s AWS_SECRET_ACCESS_KEY=%s AWS_SESSION_TOKEN=%s" \
+    $(aws sts assume-role \
+      --role-arn "${pusher_arn}" \
+      --role-session-name push-rubygems-docker-tag \
+      --query "Credentials.[AccessKeyId,SecretAccessKey,SessionToken]" \
+      --output text)) ||
+  true
+set -x
+
+if [[ -z "${AWS_SESSION_TOKEN}" ]]; then
+  echo "Skipping push since no AWS session token was found"
   exit 0
 fi
 
-echo "$DOCKER_PASSWORD" | docker login -u "$DOCKER_USERNAME" --password-stdin quay.io
+docker push "$DOCKER_TAG"
 
-docker push quay.io/$GITHUB_REPOSITORY:$GITHUB_SHA
+if [ -n "$GITHUB_STEP_SUMMARY" ]; then
+  echo -n "Pushed image \`$DOCKER_TAG\`\n" >>"$GITHUB_STEP_SUMMARY"
+fi

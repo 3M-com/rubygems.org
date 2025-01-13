@@ -1,16 +1,10 @@
 <div class="gem__aside l-col--r--pad">
-
   <% if github_data_params = github_params(@rubygem) %>
     <%= render partial: "rubygems/github_button", locals: { github_data_params: github_data_params } %>
   <% end %>
-
-  <% if @adoption %>
-    <%= link_to "adoption", rubygem_adoptions_path(@rubygem), class: "adoption__tag" %>
-  <% end %>
-
   <div class="gem__downloads-wrap" data-href="<%= api_v1_download_path(@latest_version.full_name, :format => 'json') %>">
     <h2 class="gem__downloads__heading t-text--s">
-      <%= t('stats.index.total_downloads') %>
+      <%= t('total_downloads') %>
       <span class="gem__downloads"><%= number_with_delimiter(@rubygem.downloads) %></span>
     </h2>
     <h2 class="gem__downloads__heading t-text--s">
@@ -19,24 +13,12 @@
     </h2>
   </div>
 
-  <% if @latest_version.indexed %>
-    <h2 class="gem__ruby-version__heading t-list__heading">
-      <%= t '.bundler_header' %>:
-      <div class="gem__code-wrap">
-        <input type="text" class="gem__code" id="gemfile_text" value="<%= @latest_version.to_bundler %>" readonly="readonly">
-        <span class="gem__code__icon" id="js-gem__code--gemfile" data-clipboard-target="#gemfile_text">=</span>
-        <span class="gem__code__tooltip--copy"><%= t('.copy_to_clipboard') %></span>
-        <span class="gem__code__tooltip--copied"><%= t('.copied') %></span>
-      </div>
-    </h2>
-    <h2 class="gem__ruby-version__heading t-list__heading">
-      <%= t '.install' %>:
-      <div class="gem__code-wrap">
-        <input type="text" class="gem__code" id="install_text" value="<%= @latest_version.to_install %>" readonly="readonly">
-        <span class="gem__code__icon" id="js-gem__code--install" data-clipboard-target="#install_text">=</span>
-      </div>
-    </h2>
-  <% end %>
+  <h2 class="gem__ruby-version__heading t-list__heading">
+    <%= t('.gem_version_age') %>:
+    <span class="gem__rubygem-version-age">
+      <p><%= local_time_ago(@latest_version.authored_at) %></p>
+    </span>
+  </h2>
 
   <h2 class="gem__ruby-version__heading t-list__heading">
     <%= pluralized_licenses_header @latest_version %>:
@@ -44,7 +26,6 @@
       <p><%= formatted_licenses @latest_version.licenses %></p>
     </span>
   </h2>
-
   <h2 class="gem__ruby-version__heading t-list__heading">
     <%= t('.required_ruby_version') %>:
     <i class="gem__ruby-version">
@@ -55,8 +36,7 @@
       <% end %>
     </i>
   </h2>
-
-  <% if @rubygem.mfa_required? %>
+  <% if @rubygem.metadata_mfa_required? %>
     <h2 class="gem__ruby-version__heading t-list__heading">
       <%= t('.requires_mfa') %>:
       <span class="gem__ruby-version">
@@ -64,20 +44,26 @@
       </span>
     </h2>
   <% end %>
-
+  <% if @latest_version.rubygems_metadata_mfa_required? %>
+    <h2 class="gem__ruby-version__heading t-list__heading">
+      <%= t('.released_with_mfa') %>:
+      <span class="gem__ruby-version">
+        true
+      </span>
+    </h2>
+  <% end %>
   <% if @latest_version.required_rubygems_version != '>= 0' %>
     <h2 class="gem__ruby-version__heading t-list__heading">
       <%= t('.required_rubygems_version') %>:
       <i class="gem__ruby-version">
-          <%= @latest_version.required_rubygems_version %>
+        <%= @latest_version.required_rubygems_version %>
       </i>
     </h2>
   <% end %>
-
   <h3 class="t-list__heading"><%= t '.links.header' %>:</h3>
   <div class="t-list__items">
     <%- @versioned_links.each do |name, link| %>
-      <%= link_to_page name, link %>
+      <%= link_to_page name, link, verified: @versioned_links.verified?(link) %>
     <%- end %>
     <%= change_diff_link(@rubygem, @latest_version) %>
     <%= badge_link(@rubygem) %>
@@ -85,8 +71,10 @@
     <%= atom_link(@rubygem) %>
     <%= report_abuse_link(@rubygem) %>
     <%= reverse_dependencies_link(@rubygem) %>
-    <%= ownership_link(@rubygem) if @rubygem.owned_by?(current_user) %>
+    <%= ownership_link(@rubygem) if policy(@rubygem).show_unconfirmed_ownerships? %>
+    <%= rubygem_trusted_publishers_link(@rubygem) if policy(@rubygem).configure_trusted_publishers? %>
+    <%= oidc_api_key_role_links(@rubygem) if policy(@rubygem).configure_oidc? %>
     <%= resend_owner_confirmation_link(@rubygem) if @rubygem.unconfirmed_ownership?(current_user) %>
-    <%= rubygem_adoptions_link(@rubygem) if @rubygem.owned_by?(current_user) || @rubygem.ownership_requestable?%>
+    <%= rubygem_security_events_link(@rubygem) if policy(@rubygem).show_events? %>
   </div>
 </div>

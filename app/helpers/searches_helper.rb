@@ -6,7 +6,7 @@ module SearchesHelper
     return false if suggestions.blank?
     return false if suggestions["suggest_name"].blank?
     return false if suggestions["suggest_name"][0]["options"].empty?
-    suggestions.map { |_k, v| v.first["options"] }.flatten.map { |v| v["text"] }.uniq
+    suggestions.map { |_k, v| v.first["options"] }.flatten.pluck("text").uniq
   end
 
   def aggregation_match_count(aggregration, field)
@@ -21,7 +21,7 @@ module SearchesHelper
     count = aggregration["buckets"][buckets_pos]["doc_count"]
     return unless count > 0
 
-    time_ago = (Time.zone.today - duration).to_formatted_s(:db)
+    time_ago = (Time.zone.today - duration).to_fs(:db)
     path = search_path(params: { query: "#{params[:query]} AND updated:[#{time_ago} TO *}" })
     update_info = (duration == 30.days ? t("searches.show.month_update", count: count) : t("searches.show.week_update", count: count))
     link_to update_info, path, class: "t-link--black"
